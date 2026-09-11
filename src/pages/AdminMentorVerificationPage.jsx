@@ -6,16 +6,13 @@ import {
   ShieldCheck,
   CheckCircle2,
   Clock,
-  UserCheck,
   AlertCircle,
   RefreshCw,
-  ArrowLeft,
-  Building,
-  GraduationCap
+  ArrowLeft
 } from 'lucide-react';
 
 export const AdminMentorVerificationPage = () => {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const [pendingMentors, setPendingMentors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -65,7 +62,7 @@ export const AdminMentorVerificationPage = () => {
 
     try {
       // Call database-enforced SECURITY DEFINER verify_mentor() function
-      const { data, error: rpcErr } = await supabase.rpc('verify_mentor', {
+      const { error: rpcErr } = await supabase.rpc('verify_mentor', {
         target_mentor_id: mentorId
       });
 
