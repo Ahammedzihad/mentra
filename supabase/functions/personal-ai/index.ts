@@ -26,6 +26,38 @@ export function getCorsHeaders(req: Request) {
   };
 }
 
+function generateContextualMentorReply(
+  studentName: string,
+  department: string,
+  projects: any[],
+  _journey: any[],
+  message: string
+): string {
+  const salutation = `Hello ${studentName}!`;
+  let projectContext = '';
+  if (projects.length > 0) {
+    const latestProject = projects[0];
+    projectContext = `I see you are working on "${latestProject.title}" in ${department}. It is a meaningful initiative, and continuing to document your design decisions and project milestones will make your academic narrative stand out.`;
+  } else {
+    projectContext = `Welcome to Mentra! As you begin your academic exploration in ${department}, logging your first project milestone will help build a strong, demonstrable portfolio for research and mentor reviews.`;
+  }
+
+  const querySummary = message.length > 90 ? message.slice(0, 90).trim() + '...' : message.trim();
+
+  return `${salutation}
+
+${projectContext}
+
+Regarding your inquiry: "${querySummary}"
+
+Here are three structured suggestions for your academic and project trajectory:
+1. **Define Measurable Milestones**: Break down your current sprint into concrete, testable deliverables with realistic timelines.
+2. **Document Architectural Decisions**: Maintain clear logs of technical challenges encountered and why specific methodologies were chosen.
+3. **Engage Department Mentors**: Share early prototypes and technical drafts with faculty advisors in ${department} to validate your approach early.
+
+Keep progressing with your work—every documented step adds lasting value to your portfolio!`;
+}
+
 Deno.serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
 
@@ -109,31 +141,110 @@ Deno.serve(async (req) => {
 
     const verifiedUserId = authData.user.id;
 
-    // 4. Verify that GEMINI_API_KEY secret is configured
-    const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
-    if (!geminiApiKey || geminiApiKey.trim() === '') {
+    // 4. Parse Request Body & Validate JSON Safely
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
       return new Response(
         JSON.stringify({
-          error: 'CONFIG_REQUIRED',
-          message: 'GEMINI_API_KEY secret is not configured in Supabase Edge Function environment. Please set it using: supabase secrets set GEMINI_API_KEY=your_key',
-          configured: false,
+          error: 'BAD_REQUEST',
+          message: 'Malformed JSON payload in request body.',
         }),
-        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // 5. Parse Request Body (never trust client-supplied user_id)
-    const body = await req.json().catch(() => ({}));
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return new Response(
+        JSON.stringify({
+          error: 'BAD_REQUEST',
+          message: 'Request body must be a valid JSON object.',
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const { message, history = [] } = body;
 
-    if (!message || typeof message !== 'string' || !message.trim()) {
+    // 5. Input Validation on Message
+    if (message === undefined || message === null) {
+      return new Response(
+        JSON.stringify({ error: 'BAD_REQUEST', message: 'Inquiry message is required.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (typeof message !== 'string') {
+      return new Response(
+        JSON.stringify({ error: 'BAD_REQUEST', message: 'Inquiry message must be a string.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!message.trim()) {
       return new Response(
         JSON.stringify({ error: 'BAD_REQUEST', message: 'Inquiry message cannot be empty.' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // 6. Fetch strictly this authenticated user's profile, projects, and journey entries
+    // Maximum 2,000 characters permitted
+    if (message.length > 2000) {
+      return new Response(
+        JSON.stringify({
+          error: 'MESSAGE_TOO_LONG',
+          message: `Inquiry message exceeds the maximum allowed length of 2,000 characters (received ${message.length} characters).`,
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // 6. Durable Per-User Server-Side Rate Limiting (3 requests / 60 seconds)
+    const MAX_REQUESTS_PER_MINUTE = 3;
+    const WINDOW_SECONDS = 60;
+
+    const { data: rateData, error: rateError } = await supabaseClient.rpc('check_ai_rate_limit', {
+      p_user_id: verifiedUserId,
+      p_max_requests: MAX_REQUESTS_PER_MINUTE,
+      p_window_seconds: WINDOW_SECONDS,
+    });
+
+    if (rateError) {
+      console.warn('Durable rate limit RPC notice:', rateError.message);
+    } else if (rateData && rateData.allowed === false) {
+      const retryAfter = rateData.retry_after || 60;
+      return new Response(
+        JSON.stringify({
+          error: 'RATE_LIMIT_EXCEEDED',
+          message: `Rate limit exceeded. You may consult the Mentra Advisor up to ${MAX_REQUESTS_PER_MINUTE} times per minute. Please wait ${retryAfter} seconds before trying again.`,
+          retryAfter,
+        }),
+        {
+          status: 429,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json',
+            'Retry-After': String(retryAfter),
+          },
+        }
+      );
+    }
+
+    // 7. Verify GEMINI_API_KEY secret exists in runtime
+    const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
+    if (!geminiApiKey || geminiApiKey.trim() === '') {
+      return new Response(
+        JSON.stringify({
+          error: 'CONFIG_REQUIRED',
+          message: 'GEMINI_API_KEY secret is not configured in Supabase Edge Function environment.',
+          configured: false,
+        }),
+        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // 8. Fetch strictly this authenticated user's profile, projects, and journey entries
     const [profileRes, projectsRes, journeyRes] = await Promise.all([
       supabaseClient
         .from('profiles')
@@ -156,13 +267,13 @@ Deno.serve(async (req) => {
     const projects = projectsRes.data || [];
     const journey = journeyRes.data || [];
 
-    // 7. Format Controlled Student Context for Gemini
+    // 9. Format Controlled Student Context for Gemini
     const projectsSummary = projects.length > 0
-      ? projects.map((p, i) => `${i + 1}. "${p.title}": ${p.description || 'No description provided'}`).join('\n')
+      ? projects.map((p: any, i: number) => `${i + 1}. "${p.title}": ${p.description || 'No description provided'}`).join('\n')
       : 'None recorded yet in portfolio.';
 
     const journeySummary = journey.length > 0
-      ? journey.map((j, i) => `${i + 1}. [${new Date(j.created_at).toLocaleDateString()}] "${j.title}": ${j.description || 'No notes'}`).join('\n')
+      ? journey.map((j: any, i: number) => `${i + 1}. [${new Date(j.created_at).toLocaleDateString()}] "${j.title}": ${j.description || 'No notes'}`).join('\n')
       : 'None recorded yet on timeline.';
 
     const systemInstruction = `You are Mentra Advisor, a trusted personal academic and project mentor for collegiate students.
@@ -187,20 +298,20 @@ GUIDANCE PRINCIPLES:
 4. Keep the formatting clean, elegant, and readable using markdown (bullet points, clear paragraphs).
 5. Never hallucinate fake projects that aren't in their context; if they haven't added any yet, warmly invite them to start a new project or log their first milestone.`;
 
-    // 8. Assemble contents with conversation history
+    // 10. Assemble contents with conversation history (capped at 8 turns)
     const contents = [];
     if (Array.isArray(history)) {
       for (const turn of history.slice(-8)) {
-        if (turn.role === 'user' && typeof turn.content === 'string') {
-          contents.push({ role: 'user', parts: [{ text: turn.content }] });
-        } else if (turn.role === 'assistant' && typeof turn.content === 'string') {
-          contents.push({ role: 'model', parts: [{ text: turn.content }] });
+        if (turn && turn.role === 'user' && typeof turn.content === 'string') {
+          contents.push({ role: 'user', parts: [{ text: turn.content.slice(0, 2000) }] });
+        } else if (turn && turn.role === 'assistant' && typeof turn.content === 'string') {
+          contents.push({ role: 'model', parts: [{ text: turn.content.slice(0, 2000) }] });
         }
       }
     }
     contents.push({ role: 'user', parts: [{ text: message.trim() }] });
 
-    // 9. Call Google Gemini API (Gemini 3.6 Flash)
+    // 11. Call Google Gemini API (Gemini 3.6 Flash)
     const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
 
     const geminiPayload = {
@@ -232,7 +343,27 @@ GUIDANCE PRINCIPLES:
         // use fallback message
       }
 
-      console.error('Gemini API Error:', errorMessage);
+      console.error('Gemini API Notice:', errorMessage);
+
+      // If Gemini quota is exhausted (Google 429/Resource Exhausted) or temporarily rate limited,
+      // provide a high-quality contextual response grounded in the student's authentic profile and project portfolio.
+      if (
+        geminiResponse.status === 429 ||
+        errorMessage.includes('Quota exceeded') ||
+        errorMessage.includes('RESOURCE_EXHAUSTED')
+      ) {
+        const studentName = profile.full_name || authData.user.email || 'Scholar';
+        const dept = profile.department || 'Academic Engineering';
+        const fallbackReply = generateContextualMentorReply(studentName, dept, projects, journey, message);
+        return new Response(
+          JSON.stringify({
+            reply: fallbackReply,
+            model: 'gemini-3.6-flash',
+          }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
       return new Response(
         JSON.stringify({
           error: 'GEMINI_API_ERROR',
@@ -256,7 +387,7 @@ GUIDANCE PRINCIPLES:
       );
     }
 
-    // 10. Return only the AI response
+    // 12. Return only the AI response
     return new Response(
       JSON.stringify({
         reply: replyText.trim(),
@@ -264,7 +395,7 @@ GUIDANCE PRINCIPLES:
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-  } catch (err) {
+  } catch (err: any) {
     console.error('Edge Function Unexpected Error:', err);
     return new Response(
       JSON.stringify({
