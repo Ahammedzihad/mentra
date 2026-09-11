@@ -117,10 +117,20 @@ export const AuthProvider = ({ children }) => {
 
     const trimmedEmail = email.trim();
 
+    // Dynamically set email verification redirect based on current origin:
+    // Local development (Vite): http://localhost:5173/login
+    // Production (Vercel): https://mentra-eta.vercel.app/login
+    const origin =
+      typeof window !== 'undefined' && window.location.origin
+        ? window.location.origin
+        : 'https://mentra-eta.vercel.app';
+    const emailRedirectTo = `${origin}/login`;
+
     const { data, error } = await supabase.auth.signUp({
       email: trimmedEmail,
       password,
       options: {
+        emailRedirectTo,
         data: {
           full_name: fullName.trim(),
           role,

@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { isSupabaseConfigured } from '../lib/supabase';
-import { LogIn, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { LogIn, AlertCircle, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 
 export const LoginPage = () => {
-  const { signIn } = useAuth();
+  const { user, profile, signIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -14,6 +14,46 @@ export const LoginPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
+
+  // Check URL parameters and hash for confirmation tokens or errors
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const hashStr = location.hash.startsWith('#') ? location.hash.slice(1) : location.hash;
+    const hashParams = new URLSearchParams(hashStr);
+
+    const errorCode = searchParams.get('error_code') || hashParams.get('error_code');
+    const errorDesc = searchParams.get('error_description') || hashParams.get('error_description');
+    const errorType = searchParams.get('error') || hashParams.get('error');
+    const type = searchParams.get('type') || hashParams.get('type');
+
+    if (errorCode || errorType) {
+      if (errorCode === 'otp_expired' || errorDesc?.toLowerCase().includes('expired')) {
+        setError('⚠️ Your email verification link has expired or has already been used. If your account was previously confirmed, please sign in with your password below.');
+      } else {
+        setError(errorDesc ? decodeURIComponent(errorDesc.replace(/\+/g, ' ')) : 'Authentication verification failed. Please try signing in with your password.');
+      }
+      return;
+    }
+
+    if (type === 'signup' || type === 'email_change' || hashParams.has('access_token')) {
+      setNotice('✅ Your email has been verified successfully! Welcome to Mentra.');
+    }
+  }, [location]);
+
+  // If user is already authenticated (e.g. from token auto-exchange), navigate to their role dashboard
+  useEffect(() => {
+    if (user && profile) {
+      const from = location.state?.from?.pathname;
+      if (from && from !== '/login' && from !== '/signup') {
+        navigate(from, { replace: true });
+      } else if (profile.role === 'mentor') {
+        navigate('/mentor', { replace: true });
+      } else {
+        navigate('/student', { replace: true });
+      }
+    }
+  }, [user, profile, location, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -36,7 +76,7 @@ export const LoginPage = () => {
     setLoading(true);
 
     try {
-      const { profile } = await signIn({
+      const { profile: loggedInProfile } = await signIn({
         email: email.trim(),
         password,
       });
@@ -45,7 +85,7 @@ export const LoginPage = () => {
       const from = location.state?.from?.pathname;
       if (from && from !== '/login' && from !== '/signup') {
         navigate(from, { replace: true });
-      } else if (profile?.role === 'mentor') {
+      } else if (loggedInProfile?.role === 'mentor') {
         navigate('/mentor', { replace: true });
       } else {
         navigate('/student', { replace: true });
@@ -86,6 +126,21 @@ export const LoginPage = () => {
               Access your college projects, student journey, or mentorship studio.
             </p>
           </div>
+
+          {notice && (
+            <div
+              className="notice-box info"
+              style={{
+                marginBottom: '1.5rem',
+                backgroundColor: 'var(--color-warm-gold-subtle)',
+                border: '1px solid rgba(197, 164, 109, 0.4)',
+                color: 'var(--color-primary-dark)',
+              }}
+            >
+              <CheckCircle2 size={18} style={{ color: 'var(--color-warm-gold)', flexShrink: 0 }} />
+              <span>{notice}</span>
+            </div>
+          )}
 
           {error && (
             <div className="notice-box error">

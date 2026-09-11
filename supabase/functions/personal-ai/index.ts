@@ -1,16 +1,37 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
-// CORS configuration for Supabase Edge Functions
-export const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-};
+const ALLOWED_ORIGINS = [
+  'https://mentra-eta.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'http://localhost:5176',
+];
+
+export function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('Origin') || '';
+  const isAllowed =
+    ALLOWED_ORIGINS.includes(origin) ||
+    /^https:\/\/mentra(-[a-z0-9-]+)?\.vercel\.app$/.test(origin) ||
+    /^http:\/\/localhost:\d+$/.test(origin);
+
+  const allowOrigin = isAllowed ? origin : 'https://mentra-eta.vercel.app';
+
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+    'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin',
+  };
+}
 
 Deno.serve(async (req) => {
-  // Handle CORS preflight request
+  const corsHeaders = getCorsHeaders(req);
+
+  // Handle CORS preflight request immediately
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { status: 200, headers: corsHeaders });
   }
 
   // Health / configuration check (GET)
@@ -21,7 +42,7 @@ Deno.serve(async (req) => {
         function: 'personal-ai',
         status: 'active',
         configured: isConfigured,
-        model: 'gemini-1.5-flash',
+        model: 'gemini-3.6-flash',
         message: isConfigured
           ? 'Personal AI Edge Function is active and configured.'
           : 'GEMINI_API_KEY secret is not configured in Supabase Edge Function environment.',
@@ -179,8 +200,8 @@ GUIDANCE PRINCIPLES:
     }
     contents.push({ role: 'user', parts: [{ text: message.trim() }] });
 
-    // 9. Call Google Gemini API (Gemini 1.5 Flash)
-    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
+    // 9. Call Google Gemini API (Gemini 3.6 Flash)
+    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
 
     const geminiPayload = {
       systemInstruction: {
@@ -239,7 +260,7 @@ GUIDANCE PRINCIPLES:
     return new Response(
       JSON.stringify({
         reply: replyText.trim(),
-        model: 'gemini-1.5-flash',
+        model: 'gemini-3.6-flash',
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

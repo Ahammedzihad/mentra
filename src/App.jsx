@@ -15,6 +15,7 @@ import { MentorPendingPage } from './pages/MentorPendingPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { JourneyPage } from './pages/JourneyPage';
 import { AiAdvisorPage } from './pages/AiAdvisorPage';
+import { AuthErrorPage } from './pages/AuthErrorPage';
 
 export function App() {
   return (
@@ -29,6 +30,7 @@ export function App() {
               <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignUpPage />} />
+              <Route path="/error" element={<AuthErrorPage />} />
               <Route path="/projects" element={<ProjectsPage />} />
 
               {/* Protected Routes */}
