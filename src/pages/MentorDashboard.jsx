@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -12,45 +12,98 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
-  LogOut
+  LogOut,
+  Users,
+  Check,
+  X
 } from 'lucide-react';
 
 export const MentorDashboard = () => {
   const { user, profile, loading: authLoading, refreshProfile, signOut } = useAuth();
   const [projects, setProjects] = useState([]);
+  const [incomingRequests, setIncomingRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [actionLoadingId, setActionLoadingId] = useState(null);
+  const [actionFeedback, setActionFeedback] = useState(null);
 
   const isVerified = Boolean(profile?.role === 'mentor' && profile?.is_verified === true);
 
-  useEffect(() => {
-    // Only fetch student projects if the mentor is actively verified
-    if (!isVerified || !isSupabaseConfigured) {
+  const fetchMentorData = useCallback(async () => {
+    if (!isVerified || !isSupabaseConfigured || !user) {
       setLoading(false);
       return;
     }
 
-    const fetchProjects = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const { data, error: projErr } = await supabase
-          .from('projects')
-          .select('*, profiles:user_id(full_name, department, role)')
-          .order('created_at', { ascending: false });
+    setLoading(true);
+    setError(null);
 
-        if (projErr) throw projErr;
-        setProjects(data || []);
-      } catch (err) {
-        console.error('Error fetching projects for mentor:', err);
-        setError(err.message || 'Unable to fetch project registry.');
-      } finally {
-        setLoading(false);
-      }
-    };
+    try {
+      // 1. Fetch public student projects for review
+      const { data: projData, error: projErr } = await supabase
+        .from('projects')
+        .select('*, profiles:user_id(full_name, department, role)')
+        .order('created_at', { ascending: false });
 
-    fetchProjects();
-  }, [isVerified]);
+      if (projErr) throw projErr;
+      setProjects(projData || []);
+
+      // 2. Fetch incoming mentorship requests for this mentor
+      // Strictly do not query email to comply with HIGH-01 column privileges
+      const { data: reqData, error: reqErr } = await supabase
+        .from('mentorships')
+        .select('id, student_id, mentor_id, status, created_at, student:student_id(id, full_name, department, role)')
+        .eq('mentor_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (reqErr) throw reqErr;
+      setIncomingRequests(reqData || []);
+    } catch (err) {
+      console.error('Error fetching mentor studio records:', err);
+      setError(err.message || 'Unable to fetch records.');
+    } finally {
+      setLoading(false);
+    }
+  }, [isVerified, user]);
+
+  useEffect(() => {
+    fetchMentorData();
+  }, [fetchMentorData]);
+
+  const handleUpdateMentorship = async (requestId, newStatus) => {
+    if (actionLoadingId) return;
+
+    setActionLoadingId(requestId);
+    setActionFeedback(null);
+
+    try {
+      const { error: updateErr } = await supabase
+        .from('mentorships')
+        .update({ status: newStatus })
+        .eq('id', requestId)
+        .select('id, status')
+        .single();
+
+      if (updateErr) throw updateErr;
+
+      setIncomingRequests((prev) =>
+        prev.map((r) => (r.id === requestId ? { ...r, status: newStatus } : r))
+      );
+
+      setActionFeedback({
+        type: 'success',
+        message: `Mentorship request has been ${newStatus}.`
+      });
+    } catch (err) {
+      console.error(`Failed to update mentorship status to ${newStatus}:`, err);
+      setActionFeedback({
+        type: 'error',
+        message: err.message || `Failed to ${newStatus} request.`
+      });
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
 
   // 1. Loading State (Do not briefly render Mentor Studio while loading)
   if (authLoading) {
@@ -139,7 +192,6 @@ export const MentorDashboard = () => {
   }
 
   // 3. Unverified Mentor State (Pending Review Screen)
-  // Must strictly depend on: role === 'mentor' && is_verified === false
   if (profile.role === 'mentor' && !profile.is_verified) {
     return (
       <div
@@ -164,7 +216,6 @@ export const MentorDashboard = () => {
               boxShadow: 'var(--shadow-card)',
             }}
           >
-            {/* Review Status Icon */}
             <div
               style={{
                 width: '54px',
@@ -189,7 +240,6 @@ export const MentorDashboard = () => {
               )}
             </div>
 
-            {/* Exact Required Heading */}
             <h1
               className="font-serif"
               style={{
@@ -203,7 +253,6 @@ export const MentorDashboard = () => {
               Your mentor account is pending review. You'll get full access once approved.
             </h1>
 
-            {/* Applicant Context */}
             <p
               style={{
                 fontSize: '0.925rem',
@@ -215,7 +264,6 @@ export const MentorDashboard = () => {
               Thank you for applying to advise scholars, <strong>{profile.full_name || 'Colleague'}</strong>. To safeguard academic rigor and student guidance standards, the college academic committee manually ratifies mentor appointments.
             </p>
 
-            {/* Clean, minimal actions — NO dashboard tools, NO project review actions, NO fake verify button */}
             <div
               style={{
                 display: 'flex',
@@ -247,6 +295,9 @@ export const MentorDashboard = () => {
   }
 
   // 4. Verified Mentor Studio (Full Access)
+  const pendingRequests = incomingRequests.filter((r) => r.status === 'pending');
+  const connectedStudents = incomingRequests.filter((r) => r.status === 'accepted');
+
   return (
     <div style={{ padding: '3rem 0 5rem 0', backgroundColor: 'var(--color-warm-ivory)', minHeight: '80vh' }}>
       <div className="container">
@@ -319,6 +370,213 @@ export const MentorDashboard = () => {
             <span>{error}</span>
           </div>
         )}
+
+        {actionFeedback && (
+          <div
+            className={`notice-box ${actionFeedback.type === 'error' ? 'error' : 'success'}`}
+            style={{
+              marginBottom: '2rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.65rem',
+              padding: '1rem 1.25rem',
+              borderRadius: 'var(--radius-sm)',
+              border: actionFeedback.type === 'error' ? '1px solid #D16B58' : '1px solid #7FA482',
+              backgroundColor: actionFeedback.type === 'error' ? '#FDF2F0' : '#F1F7F2',
+              color: actionFeedback.type === 'error' ? '#872B1B' : '#245C2D',
+              fontSize: '0.9rem'
+            }}
+          >
+            {actionFeedback.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
+            <span>{actionFeedback.message}</span>
+          </div>
+        )}
+
+        {/* Phase 2 Item 4: Incoming Mentorship Requests (Pending) */}
+        <div style={{ marginBottom: '2.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <div>
+              <span className="label-academic gold">Action Required</span>
+              <h2 className="font-serif" style={{ fontSize: '1.6rem', marginTop: '0.2rem' }}>
+                Incoming Mentorship Requests ({pendingRequests.length})
+              </h2>
+            </div>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Students requesting your academic guidance
+            </span>
+          </div>
+
+          {loading ? (
+            <div className="card-academic" style={{ textAlign: 'center', padding: '2.5rem' }}>
+              <p style={{ color: 'var(--text-muted)' }}>Loading mentorship requests...</p>
+            </div>
+          ) : pendingRequests.length === 0 ? (
+            <div
+              className="card-academic"
+              style={{
+                textAlign: 'center',
+                padding: '2.5rem 2rem',
+                backgroundColor: 'var(--color-warm-ivory-light)'
+              }}
+            >
+              <Clock size={32} style={{ color: 'var(--color-warm-gold)', margin: '0 auto 0.75rem auto' }} />
+              <h3 className="font-serif" style={{ fontSize: '1.15rem', marginBottom: '0.35rem' }}>
+                No Pending Inquiries
+              </h3>
+              <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', maxWidth: '420px', margin: '0 auto' }}>
+                When students submit mentorship inquiries for your department or research fields, they will appear here for review.
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {pendingRequests.map((req) => {
+                const studentName = req.student?.full_name || 'Undergraduate Scholar';
+                const studentDept = req.student?.department || 'Collegiate Undergrad';
+                const reqDate = req.created_at
+                  ? new Date(req.created_at).toLocaleDateString(undefined, {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric'
+                    })
+                  : 'Recent';
+                const isProcessing = actionLoadingId === req.id;
+
+                return (
+                  <div
+                    key={req.id}
+                    className="card-academic"
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: '1.25rem',
+                      padding: '1.5rem',
+                      borderLeft: '3px solid var(--color-warm-gold)'
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                        <span className="badge-dept terracotta">{studentDept}</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Requested {reqDate}</span>
+                      </div>
+                      <h3 style={{ fontSize: '1.2rem', marginBottom: '0.25rem', color: 'var(--color-primary-dark)' }}>
+                        {studentName}
+                      </h3>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
+                        Inquiring for faculty stewardship and research advisement.
+                      </p>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.65rem' }}>
+                      <button
+                        onClick={() => handleUpdateMentorship(req.id, 'accepted')}
+                        disabled={isProcessing}
+                        className="btn btn-primary btn-sm"
+                        style={{
+                          backgroundColor: '#2E5A36',
+                          borderColor: '#2E5A36',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.35rem'
+                        }}
+                      >
+                        <Check size={14} />
+                        <span>{isProcessing ? 'Saving...' : 'Accept'}</span>
+                      </button>
+                      <button
+                        onClick={() => handleUpdateMentorship(req.id, 'declined')}
+                        disabled={isProcessing}
+                        className="btn btn-secondary btn-sm"
+                        style={{
+                          color: '#9E382A',
+                          borderColor: 'rgba(158, 56, 42, 0.4)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.35rem'
+                        }}
+                      >
+                        <X size={14} />
+                        <span>{isProcessing ? 'Saving...' : 'Decline'}</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Phase 2 Item 5: Connected List (Accepted mentorships only) */}
+        <div style={{ marginBottom: '2.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <div>
+              <span className="label-academic charcoal">Active Guidance</span>
+              <h2 className="font-serif" style={{ fontSize: '1.6rem', marginTop: '0.2rem' }}>
+                Connected Scholars ({connectedStudents.length})
+              </h2>
+            </div>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Active student mentees ratified under your guidance
+            </span>
+          </div>
+
+          {connectedStudents.length === 0 ? (
+            <div
+              className="card-academic"
+              style={{
+                textAlign: 'center',
+                padding: '2.5rem 2rem',
+                backgroundColor: 'var(--color-warm-ivory-light)'
+              }}
+            >
+              <Users size={32} style={{ color: 'var(--color-primary-dark)', margin: '0 auto 0.75rem auto' }} />
+              <h3 className="font-serif" style={{ fontSize: '1.15rem', marginBottom: '0.35rem' }}>
+                No Connected Scholars Yet
+              </h3>
+              <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', maxWidth: '420px', margin: '0 auto' }}>
+                Accepted student mentorships will appear here as active mentees under your academic stewardship.
+              </p>
+            </div>
+          ) : (
+            <div className="grid-3" style={{ gap: '1.25rem' }}>
+              {connectedStudents.map((conn) => {
+                const sName = conn.student?.full_name || 'Undergraduate Scholar';
+                const sDept = conn.student?.department || 'Academic Dept';
+                const connDate = conn.created_at
+                  ? new Date(conn.created_at).toLocaleDateString(undefined, {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric'
+                    })
+                  : 'Active';
+
+                return (
+                  <div
+                    key={conn.id}
+                    className="card-academic"
+                    style={{
+                      borderLeft: '3px solid #2E5A36',
+                      backgroundColor: 'var(--color-white)',
+                      padding: '1.5rem'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <span className="badge-dept terracotta">{sDept}</span>
+                      <span className="badge-dept" style={{ backgroundColor: '#EBF3EC', color: '#266432', fontSize: '0.72rem' }}>
+                        Active Mentee
+                      </span>
+                    </div>
+                    <h3 style={{ fontSize: '1.15rem', marginBottom: '0.25rem' }}>{sName}</h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                      Connected since {connDate} &bull; Undergraduate Researcher
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Mentor Responsibilities Grid */}
         <div className="grid-3" style={{ marginBottom: '2.5rem' }}>
@@ -445,3 +703,4 @@ export const MentorDashboard = () => {
     </div>
   );
 };
+

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -13,7 +13,11 @@ import {
   Trash2,
   ShieldCheck,
   ArrowRight,
-  GraduationCap
+  GraduationCap,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  UserCheck
 } from 'lucide-react';
 
 export const StudentDashboard = () => {
@@ -21,6 +25,7 @@ export const StudentDashboard = () => {
   const [projects, setProjects] = useState([]);
   const [journeyEntries, setJourneyEntries] = useState([]);
   const [verifiedMentors, setVerifiedMentors] = useState([]);
+  const [mentorships, setMentorships] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -67,6 +72,17 @@ export const StudentDashboard = () => {
         .eq('is_verified', true);
 
       setVerifiedMentors(mentorsData || []);
+
+      // 4. Fetch own mentorship requests (Phase 2 connection layer)
+      const { data: mentorshipsData, error: mentorErr } = await supabase
+        .from('mentorships')
+        .select('id, mentor_id, status, created_at, mentor:mentor_id(id, full_name, department, role, is_verified)')
+        .eq('student_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (!mentorErr) {
+        setMentorships(mentorshipsData || []);
+      }
     } catch (err) {
       console.error('Error loading student data:', err);
       setError(err.message || 'Unable to load student records.');
@@ -96,6 +112,8 @@ export const StudentDashboard = () => {
   const handleJourneyAdded = (newEntry) => {
     setJourneyEntries((prev) => [newEntry, ...prev]);
   };
+
+  const connectedMentors = mentorships.filter((m) => m.status === 'accepted');
 
   return (
     <div style={{ padding: '3rem 0 5rem 0' }}>
@@ -131,6 +149,14 @@ export const StudentDashboard = () => {
 
           {/* Quick Actions */}
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <Link
+              to="/mentors"
+              className="btn btn-secondary btn-sm"
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            >
+              <GraduationCap size={15} style={{ color: 'var(--color-warm-gold)' }} />
+              <span>Browse Mentors</span>
+            </Link>
             <button
               onClick={() => setIsJourneyModalOpen(true)}
               className="btn btn-secondary btn-sm"
@@ -153,6 +179,102 @@ export const StudentDashboard = () => {
         {error && (
           <div className="notice-box error" style={{ marginBottom: '2rem' }}>
             <span>{error}</span>
+          </div>
+        )}
+
+        {/* Phase 2: Connected Mentors Section (Item 5: Accepted mentorships only) */}
+        {connectedMentors.length > 0 && (
+          <div style={{ marginBottom: '2.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <div>
+                <span className="label-academic gold">Active Guidance</span>
+                <h2 style={{ fontSize: '1.45rem', marginTop: '0.15rem' }}>Connected Mentors</h2>
+              </div>
+              <Link to="/mentors" className="btn btn-secondary btn-sm">
+                <span>View Network</span>
+                <ArrowRight size={14} />
+              </Link>
+            </div>
+
+            <div className="grid-3">
+              {connectedMentors.map((c) => (
+                <div key={c.id} className="card-academic" style={{ borderLeft: '3px solid #2E5A36' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <span className="badge-dept terracotta">{c.mentor?.department || 'Faculty'}</span>
+                    <span className="badge-dept" style={{ backgroundColor: '#EBF3EC', color: '#266432', fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <CheckCircle2 size={12} /> Connected
+                    </span>
+                  </div>
+                  <h3 style={{ fontSize: '1.15rem', marginBottom: '0.25rem' }}>{c.mentor?.full_name}</h3>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Collegiate Faculty Advisor &bull; {c.mentor?.department}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Phase 2: My Mentorship Requests Section (Item 3) */}
+        {mentorships.length > 0 && (
+          <div style={{ marginBottom: '2.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <div>
+                <span className="label-academic charcoal">Inquiry Tracking</span>
+                <h2 style={{ fontSize: '1.45rem', marginTop: '0.15rem' }}>My Mentorship Requests</h2>
+              </div>
+              <Link to="/mentors" className="btn btn-secondary btn-sm">
+                <span>Browse Directory</span>
+                <ArrowRight size={14} />
+              </Link>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {mentorships.map((req) => (
+                <div
+                  key={req.id}
+                  className="card-academic"
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    padding: '1.15rem 1.5rem',
+                    gap: '1rem'
+                  }}
+                >
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                      <span className="badge-dept terracotta" style={{ fontSize: '0.7rem' }}>
+                        {req.mentor?.department || 'Academic Dept'}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        {req.created_at ? new Date(req.created_at).toLocaleDateString() : 'Recent'}
+                      </span>
+                    </div>
+                    <h4 style={{ fontSize: '1.05rem', margin: 0 }}>{req.mentor?.full_name}</h4>
+                  </div>
+
+                  <div>
+                    {req.status === 'pending' && (
+                      <span className="badge-dept gold" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.3rem 0.65rem' }}>
+                        <Clock size={13} /> Pending
+                      </span>
+                    )}
+                    {req.status === 'accepted' && (
+                      <span className="badge-dept" style={{ backgroundColor: '#EBF3EC', color: '#266432', display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.3rem 0.65rem' }}>
+                        <CheckCircle2 size={13} /> Accepted
+                      </span>
+                    )}
+                    {req.status === 'declined' && (
+                      <span className="badge-dept terracotta" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.3rem 0.65rem' }}>
+                        <XCircle size={13} /> Declined
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -317,16 +439,17 @@ export const StudentDashboard = () => {
           </div>
         </div>
 
-        {/* Verified Faculty Advisors Section (Only verified mentors appear here) */}
+        {/* Verified Faculty Advisors Section */}
         <div style={{ marginTop: '3.5rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '2.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
             <div>
               <span className="label-academic gold">Academic Advisory</span>
               <h2 className="font-serif" style={{ fontSize: '1.5rem', marginTop: '0.2rem' }}>Verified Faculty Mentors</h2>
             </div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Institutions enforce manual verification for all mentor appointments
-            </div>
+            <Link to="/mentors" className="btn btn-secondary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+              <UserCheck size={14} />
+              <span>Browse All Verified Mentors &rarr;</span>
+            </Link>
           </div>
 
           {verifiedMentors.length === 0 ? (

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Menu, X, ShieldCheck, Clock, LogOut, Sparkles } from 'lucide-react';
@@ -156,6 +156,19 @@ export const Navbar = () => {
                 }}
               >
                 Student Space
+              </Link>
+              <Link
+                to="/mentors"
+                style={{
+                  fontSize: '0.9rem',
+                  fontWeight: isActive('/mentors') ? '600' : '500',
+                  color: isActive('/mentors') ? 'var(--color-primary-dark)' : 'var(--text-secondary)',
+                  borderBottom: isActive('/mentors') ? '2px solid var(--color-terracotta)' : '2px solid transparent',
+                  paddingBottom: '0.25rem',
+                  transition: 'var(--transition-smooth)',
+                }}
+              >
+                Browse Mentors
               </Link>
               <Link
                 to="/ai"
@@ -336,6 +349,13 @@ export const Navbar = () => {
                 style={{ fontSize: '1rem', fontWeight: 500, color: 'var(--text-primary)' }}
               >
                 Student Space
+              </Link>
+              <Link
+                to="/mentors"
+                onClick={() => setMobileMenuOpen(false)}
+                style={{ fontSize: '1rem', fontWeight: 500, color: 'var(--text-primary)' }}
+              >
+                Browse Mentors
               </Link>
               <Link
                 to="/ai"

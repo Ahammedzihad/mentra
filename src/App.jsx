@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ConfigNotice } from './components/ConfigNotice';
@@ -15,6 +15,7 @@ import { MentorPendingPage } from './pages/MentorPendingPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { JourneyPage } from './pages/JourneyPage';
 import { AiAdvisorPage } from './pages/AiAdvisorPage';
+import { BrowseMentorsPage } from './pages/BrowseMentorsPage';
 import { AuthErrorPage } from './pages/AuthErrorPage';
 
 export function App() {
@@ -39,6 +40,14 @@ export function App() {
                 element={
                   <ProtectedRoute allowedRole="student">
                     <StudentDashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/mentors"
+                element={
+                  <ProtectedRoute allowedRole="student">
+                    <BrowseMentorsPage />
                   </ProtectedRoute>
                 }
               />
