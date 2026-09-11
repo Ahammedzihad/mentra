@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -12,7 +12,8 @@ import {
   UserCheck,
   Search,
   ArrowLeft,
-  AlertCircle
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 
 export const BrowseMentorsPage = () => {
@@ -20,8 +21,10 @@ export const BrowseMentorsPage = () => {
   const [mentors, setMentors] = useState([]);
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dbError, setDbError] = useState(null);
+  const [actionError, setActionError] = useState(null);
+  const [actionSuccess, setActionSuccess] = useState(null);
   const [submittingMentorId, setSubmittingMentorId] = useState(null);
-  const [feedback, setFeedback] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('browse'); // 'browse' | 'requests'
 
@@ -32,23 +35,30 @@ export const BrowseMentorsPage = () => {
     }
 
     setLoading(true);
+    setDbError(null);
+
     try {
       // 1. Fetch only verified mentors (role = 'mentor' AND is_verified = true)
       // Strictly do not select email to respect HIGH-01 column privileges
       const { data: mentorsData, error: mentorsErr } = await supabase
         .from('profiles')
-        .select('id, full_name, department, role, is_verified, created_at')
+        .select('id, full_name, department, role, is_verified, bio, created_at')
         .eq('role', 'mentor')
         .eq('is_verified', true)
         .order('full_name', { ascending: true });
 
       if (mentorsErr) throw mentorsErr;
-      setMentors(mentorsData || []);
+
+      // Defensive filtering: unverified or pending mentors must NEVER appear in this list
+      const verifiedOnly = (mentorsData || []).filter(
+        (m) => m.role === 'mentor' && m.is_verified === true
+      );
+      setMentors(verifiedOnly);
 
       // 2. Fetch student's own requests
       const { data: requestsData, error: requestsErr } = await supabase
         .from('mentorships')
-        .select('id, mentor_id, student_id, status, created_at, mentor:mentor_id(id, full_name, department, role, is_verified)')
+        .select('id, mentor_id, student_id, status, created_at, mentor:mentor_id(id, full_name, department, role, is_verified, bio)')
         .eq('student_id', user.id)
         .order('created_at', { ascending: false });
 
@@ -56,7 +66,7 @@ export const BrowseMentorsPage = () => {
       setRequests(requestsData || []);
     } catch (err) {
       console.error('Error fetching mentors/requests:', err);
-      setFeedback({ type: 'error', message: err.message || 'Unable to load mentors.' });
+      setDbError(err.message || 'Unable to load mentors from database. Please check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -66,13 +76,25 @@ export const BrowseMentorsPage = () => {
     fetchData();
   }, [fetchData]);
 
+  // Request Mentorship behavior
   const handleRequestMentorship = async (mentorId) => {
     if (!user || submittingMentorId) return;
 
+    setActionError(null);
+    setActionSuccess(null);
+
+    // Frontend validation: Check whether the student already has a request with this mentor
+    const existingReq = requests.find((r) => r.mentor_id === mentorId);
+    if (existingReq) {
+      setActionError(`You already have a ${existingReq.status} mentorship request with this mentor.`);
+      return;
+    }
+
     setSubmittingMentorId(mentorId);
-    setFeedback(null);
 
     try {
+      // Create new row in public.mentorships
+      // student_id is strictly derived from user.id (no client spoofing allowed)
       const { data, error } = await supabase
         .from('mentorships')
         .insert({
@@ -87,16 +109,17 @@ export const BrowseMentorsPage = () => {
 
       // Update local state immediately
       setRequests((prev) => [data, ...prev]);
-      setFeedback({
-        type: 'success',
-        message: 'Mentorship request submitted successfully. Awaiting mentor review.'
-      });
+      setActionSuccess('Mentorship request submitted successfully. Status is now Pending.');
     } catch (err) {
       console.error('Request mentorship failed:', err);
-      setFeedback({
-        type: 'error',
-        message: err.message || 'Failed to submit mentorship request. Please try again.'
-      });
+      // Check for duplicate constraint violation
+      if (err.code === '23505' || err.message?.includes('duplicate') || err.message?.includes('unique')) {
+        setActionError('A mentorship request already exists for this mentor.');
+        // Refresh to sync state
+        fetchData();
+      } else {
+        setActionError(err.message || 'Failed to submit mentorship request. Please try again.');
+      }
     } finally {
       setSubmittingMentorId(null);
     }
@@ -109,13 +132,13 @@ export const BrowseMentorsPage = () => {
   }, {});
 
   const filteredMentors = mentors.filter((m) => {
-    const query = searchQuery.toLowerCase();
+    const query = searchQuery.toLowerCase().trim();
+    if (!query) return true;
     const nameMatch = m.full_name?.toLowerCase().includes(query);
     const deptMatch = m.department?.toLowerCase().includes(query);
-    return nameMatch || deptMatch;
+    const bioMatch = m.bio?.toLowerCase().includes(query);
+    return nameMatch || deptMatch || bioMatch;
   });
-
-  const connectedMentors = requests.filter((r) => r.status === 'accepted');
 
   return (
     <div style={{ padding: '3rem 0 5rem 0', minHeight: '80vh', backgroundColor: 'var(--color-warm-ivory)' }}>
@@ -127,16 +150,16 @@ export const BrowseMentorsPage = () => {
               <ArrowLeft size={14} />
               <span>Student Space</span>
             </Link>
-            <span className="badge-dept gold">Phase 2: Mentorship Network</span>
+            <span className="badge-dept gold">Faculty Mentorship Network</span>
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '1.5rem' }}>
             <div>
               <h1 className="font-serif" style={{ fontSize: '2.25rem', marginBottom: '0.35rem', color: 'var(--color-primary-dark)' }}>
-                Collegiate Faculty Mentors
+                Browse Mentors
               </h1>
               <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', maxWidth: '640px' }}>
-                Connect directly with ratified faculty mentors in your discipline. Every mentor on this registry has undergone institutional review and collegiate verification.
+                Connect directly with verified faculty mentors in your discipline. Every mentor on this registry has undergone collegiate verification.
               </p>
             </div>
 
@@ -160,10 +183,43 @@ export const BrowseMentorsPage = () => {
           </div>
         </div>
 
-        {/* Feedback Alert */}
-        {feedback && (
+        {/* Database Error Banner with Retry */}
+        {dbError && (
           <div
-            className={`notice-box ${feedback.type === 'error' ? 'error' : 'success'}`}
+            className="notice-box error"
+            style={{
+              marginBottom: '2rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '1rem',
+              padding: '1rem 1.25rem',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid #D16B58',
+              backgroundColor: '#FDF2F0',
+              color: '#872B1B',
+              fontSize: '0.9rem'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+              <AlertCircle size={18} />
+              <span>{dbError}</span>
+            </div>
+            <button
+              onClick={fetchData}
+              className="btn btn-secondary btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', borderColor: '#D16B58', color: '#872B1B' }}
+            >
+              <RefreshCw size={13} />
+              <span>Retry</span>
+            </button>
+          </div>
+        )}
+
+        {/* Action Error Banner */}
+        {actionError && (
+          <div
+            className="notice-box error"
             style={{
               marginBottom: '2rem',
               display: 'flex',
@@ -171,14 +227,36 @@ export const BrowseMentorsPage = () => {
               gap: '0.65rem',
               padding: '1rem 1.25rem',
               borderRadius: 'var(--radius-sm)',
-              border: feedback.type === 'error' ? '1px solid #D16B58' : '1px solid #7FA482',
-              backgroundColor: feedback.type === 'error' ? '#FDF2F0' : '#F1F7F2',
-              color: feedback.type === 'error' ? '#872B1B' : '#245C2D',
+              border: '1px solid #D16B58',
+              backgroundColor: '#FDF2F0',
+              color: '#872B1B',
               fontSize: '0.9rem'
             }}
           >
-            {feedback.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
-            <span>{feedback.message}</span>
+            <AlertCircle size={18} />
+            <span>{actionError}</span>
+          </div>
+        )}
+
+        {/* Action Success Banner */}
+        {actionSuccess && (
+          <div
+            className="notice-box success"
+            style={{
+              marginBottom: '2rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.65rem',
+              padding: '1rem 1.25rem',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid #7FA482',
+              backgroundColor: '#F1F7F2',
+              color: '#245C2D',
+              fontSize: '0.9rem'
+            }}
+          >
+            <CheckCircle2 size={18} />
+            <span>{actionSuccess}</span>
           </div>
         )}
 
@@ -202,7 +280,7 @@ export const BrowseMentorsPage = () => {
               <Search size={18} style={{ color: 'var(--text-muted)' }} />
               <input
                 type="text"
-                placeholder="Search by mentor name or academic department..."
+                placeholder="Search by mentor name, department, or research interests..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={{
@@ -229,7 +307,7 @@ export const BrowseMentorsPage = () => {
                     margin: '0 auto 1rem auto'
                   }}
                 />
-                <p style={{ color: 'var(--text-muted)' }}>Retrieving ratified faculty mentors...</p>
+                <p style={{ color: 'var(--text-muted)' }}>Retrieving verified faculty mentors...</p>
                 <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
               </div>
             ) : filteredMentors.length === 0 ? (
@@ -246,7 +324,9 @@ export const BrowseMentorsPage = () => {
                   No Verified Mentors Available
                 </h3>
                 <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', maxWidth: '460px', margin: '0 auto' }}>
-                  Faculty applications undergo institutional verification. Mentors will appear in this registry once officially approved.
+                  {searchQuery
+                    ? 'No verified mentors match your search criteria. Try a different name or department.'
+                    : 'Faculty applications undergo institutional verification. Verified mentors will appear in this registry once approved.'}
                 </p>
               </div>
             ) : (
@@ -270,36 +350,53 @@ export const BrowseMentorsPage = () => {
                       }}
                     >
                       <div>
-                        {/* Header: Dept and Verified Tag */}
+                        {/* Header: Dept and Clear Verification Status */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                           <span className="badge-dept terracotta">{mentor.department || 'Academic Department'}</span>
-                          <span className="badge-dept gold" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                          <span
+                            className="badge-dept gold"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.3rem',
+                              backgroundColor: 'var(--color-warm-gold-subtle)',
+                              color: '#7A5714',
+                              border: '1px solid rgba(197, 164, 109, 0.4)'
+                            }}
+                          >
                             <ShieldCheck size={13} style={{ color: '#8C6A30' }} />
-                            <span>Verified</span>
+                            <span>Verified Mentor</span>
                           </span>
                         </div>
 
-                        {/* Name */}
+                        {/* Mentor Name */}
                         <h3 className="font-serif" style={{ fontSize: '1.25rem', marginBottom: '0.35rem', color: 'var(--color-primary-dark)' }}>
                           {mentor.full_name}
                         </h3>
 
-                        {/* Subtitle */}
+                        {/* Department Subtitle */}
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.85rem' }}>
-                          Collegiate Faculty Advisor &bull; {mentor.department}
+                          Department of {mentor.department || 'Academic Studies'}
                         </div>
 
-                        {/* Short Bio */}
-                        <p style={{ fontSize: '0.85rem', lineHeight: '1.6', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                          Academic mentor advising undergraduate cohorts in research methodologies, symposium presentations, and capstone investigations.
-                        </p>
+                        {/* Short Bio (if available) */}
+                        {mentor.bio ? (
+                          <p style={{ fontSize: '0.85rem', lineHeight: '1.6', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                            {mentor.bio}
+                          </p>
+                        ) : (
+                          <p style={{ fontSize: '0.85rem', lineHeight: '1.6', color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: '1.5rem' }}>
+                            Faculty advisor specializing in research stewardship and project consultation in {mentor.department || 'academic studies'}.
+                          </p>
+                        )}
                       </div>
 
-                      {/* Request Mentorship Action or Status */}
+                      {/* Request Mentorship Action or Existing Request Status */}
                       <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
                         {existingRequest ? (
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Status:</span>
+                            {/* Requirement 4: pending -> show "Pending" */}
                             {existingRequest.status === 'pending' && (
                               <span
                                 className="badge-dept gold"
@@ -307,13 +404,15 @@ export const BrowseMentorsPage = () => {
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   gap: '0.35rem',
-                                  padding: '0.35rem 0.65rem'
+                                  padding: '0.35rem 0.65rem',
+                                  fontWeight: 600
                                 }}
                               >
                                 <Clock size={13} />
-                                <span>Request Pending</span>
+                                <span>Pending</span>
                               </span>
                             )}
+                            {/* Requirement 4: accepted -> show "Connected" */}
                             {existingRequest.status === 'accepted' && (
                               <span
                                 className="badge-dept"
@@ -324,13 +423,15 @@ export const BrowseMentorsPage = () => {
                                   padding: '0.35rem 0.65rem',
                                   backgroundColor: '#EBF3EC',
                                   color: '#266432',
-                                  border: '1px solid rgba(46, 90, 54, 0.25)'
+                                  border: '1px solid rgba(46, 90, 54, 0.25)',
+                                  fontWeight: 600
                                 }}
                               >
                                 <CheckCircle2 size={13} />
-                                <span>Connected Mentor</span>
+                                <span>Connected</span>
                               </span>
                             )}
+                            {/* Requirement 4: declined -> show "Declined" */}
                             {existingRequest.status === 'declined' && (
                               <span
                                 className="badge-dept terracotta"
@@ -338,11 +439,12 @@ export const BrowseMentorsPage = () => {
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   gap: '0.35rem',
-                                  padding: '0.35rem 0.65rem'
+                                  padding: '0.35rem 0.65rem',
+                                  fontWeight: 600
                                 }}
                               >
                                 <XCircle size={13} />
-                                <span>Request Declined</span>
+                                <span>Declined</span>
                               </span>
                             )}
                           </div>
@@ -366,7 +468,7 @@ export const BrowseMentorsPage = () => {
           </div>
         )}
 
-        {/* TAB 2: MY MENTORSHIP REQUESTS (Item 3 Requirement) */}
+        {/* TAB 2: MY MENTORSHIP REQUESTS */}
         {activeTab === 'requests' && (
           <div>
             <div style={{ marginBottom: '1.5rem' }}>
@@ -396,7 +498,7 @@ export const BrowseMentorsPage = () => {
                   No mentorship requests yet
                 </h3>
                 <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', maxWidth: '400px', margin: '0 auto 1.5rem auto' }}>
-                  Browse our registry of verified faculty advisors to request academic stweardship on your research.
+                  Browse our registry of verified faculty advisors to request academic stewardship on your research.
                 </p>
                 <button onClick={() => setActiveTab('browse')} className="btn btn-primary btn-sm">
                   Browse Faculty Mentors
@@ -448,13 +550,13 @@ export const BrowseMentorsPage = () => {
                         {req.status === 'pending' && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', backgroundColor: 'var(--color-warm-gold-subtle)', padding: '0.5rem 0.85rem', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(197, 164, 109, 0.4)', color: '#7A5714', fontSize: '0.85rem', fontWeight: 600 }}>
                             <Clock size={15} />
-                            <span>Pending Review</span>
+                            <span>Pending</span>
                           </div>
                         )}
                         {req.status === 'accepted' && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', backgroundColor: '#EBF3EC', padding: '0.5rem 0.85rem', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(46, 90, 54, 0.3)', color: '#266432', fontSize: '0.85rem', fontWeight: 600 }}>
                             <CheckCircle2 size={15} />
-                            <span>Accepted &bull; Connected</span>
+                            <span>Connected</span>
                           </div>
                         )}
                         {req.status === 'declined' && (
@@ -469,32 +571,6 @@ export const BrowseMentorsPage = () => {
                 })}
               </div>
             )}
-          </div>
-        )}
-
-        {/* CONNECTED LIST (Accepted mentorships only - Item 5) */}
-        {connectedMentors.length > 0 && (
-          <div style={{ marginTop: '3.5rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '2.5rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem' }}>
-              <span className="label-academic gold">Active Academic Connections</span>
-              <h2 className="font-serif" style={{ fontSize: '1.45rem' }}>Connected Mentors</h2>
-            </div>
-            <div className="grid-3">
-              {connectedMentors.map((c) => (
-                <div key={c.id} className="card-academic" style={{ borderLeft: '3px solid #2E5A36' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                    <span className="badge-dept terracotta">{c.mentor?.department || 'Faculty'}</span>
-                    <span className="badge-dept" style={{ backgroundColor: '#EBF3EC', color: '#266432', fontSize: '0.7rem' }}>
-                      Active Mentee
-                    </span>
-                  </div>
-                  <h3 style={{ fontSize: '1.15rem', marginBottom: '0.25rem' }}>{c.mentor?.full_name}</h3>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    Established advisor for undergraduate research and project consultation.
-                  </p>
-                </div>
-              ))}
-            </div>
           </div>
         )}
       </div>
