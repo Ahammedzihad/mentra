@@ -17,7 +17,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id, full_name, department, role, is_verified, created_at')
         .eq('id', userId)
         .maybeSingle();
 
@@ -47,7 +47,7 @@ export const AuthProvider = ({ children }) => {
           const { data: inserted, error: insErr } = await supabase
             .from('profiles')
             .upsert([fallbackProfile])
-            .select()
+            .select('id, full_name, department, role, is_verified, created_at')
             .maybeSingle();
 
           if (!insErr && inserted) {

@@ -59,7 +59,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
             description: description.trim(),
           },
         ])
-        .select('*, profiles:user_id(full_name, department, role, email)')
+        .select('*, profiles:user_id(full_name, department, role, is_verified)')
         .single();
 
       if (insertError) throw insertError;
