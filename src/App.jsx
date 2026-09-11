@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ConfigNotice } from './components/ConfigNotice';
@@ -16,6 +16,7 @@ import { ProjectsPage } from './pages/ProjectsPage';
 import { JourneyPage } from './pages/JourneyPage';
 import { AiAdvisorPage } from './pages/AiAdvisorPage';
 import { BrowseMentorsPage } from './pages/BrowseMentorsPage';
+import { AdminMentorVerificationPage } from './pages/AdminMentorVerificationPage';
 import { AuthErrorPage } from './pages/AuthErrorPage';
 
 export function App() {
@@ -34,7 +35,7 @@ export function App() {
               <Route path="/error" element={<AuthErrorPage />} />
               <Route path="/projects" element={<ProjectsPage />} />
 
-              {/* Protected Routes */}
+              {/* Student Protected Routes */}
               <Route
                 path="/student"
                 element={
@@ -52,6 +53,16 @@ export function App() {
                 }
               />
               <Route
+                path="/ai"
+                element={
+                  <ProtectedRoute allowedRole="student">
+                    <AiAdvisorPage />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Mentor Protected Routes */}
+              <Route
                 path="/mentor"
                 element={
                   <ProtectedRoute allowedRole="mentor">
@@ -67,19 +78,24 @@ export function App() {
                   </ProtectedRoute>
                 }
               />
+
+              {/* Admin Protected Routes */}
+              <Route
+                path="/admin/mentors"
+                element={
+                  <ProtectedRoute allowedRole="admin">
+                    <AdminMentorVerificationPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="/admin" element={<Navigate to="/admin/mentors" replace />} />
+
+              {/* General Protected Routes */}
               <Route
                 path="/journey"
                 element={
                   <ProtectedRoute>
                     <JourneyPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/ai"
-                element={
-                  <ProtectedRoute allowedRole="student">
-                    <AiAdvisorPage />
                   </ProtectedRoute>
                 }
               />

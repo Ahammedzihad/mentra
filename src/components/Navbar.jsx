@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Menu, X, ShieldCheck, Clock, LogOut, Sparkles } from 'lucide-react';
@@ -126,6 +126,22 @@ export const Navbar = () => {
             </Link>
           )}
 
+          {user && profile?.role === 'admin' && (
+            <Link
+              to="/admin/mentors"
+              style={{
+                fontSize: '0.9rem',
+                fontWeight: isActive('/admin/mentors') ? '600' : '500',
+                color: isActive('/admin/mentors') ? 'var(--color-primary-dark)' : 'var(--text-secondary)',
+                borderBottom: isActive('/admin/mentors') ? '2px solid var(--color-terracotta)' : '2px solid transparent',
+                paddingBottom: '0.25rem',
+                transition: 'var(--transition-smooth)',
+              }}
+            >
+              Mentor Verification
+            </Link>
+          )}
+
           {user && profile?.role === 'mentor' && profile?.is_verified === true && (
             <Link
               to="/mentor"
@@ -203,7 +219,7 @@ export const Navbar = () => {
           {user ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.9rem' }}>
               <Link
-                to={profile?.role === 'mentor' ? '/mentor' : '/student'}
+                to={profile?.role === 'admin' ? '/admin/mentors' : profile?.role === 'mentor' ? '/mentor' : '/student'}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -236,8 +252,8 @@ export const Navbar = () => {
                     {profile?.full_name || 'Member'}
                   </div>
                   <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', marginTop: '0.15rem' }}>
-                    <span className={`badge-dept ${profile?.role === 'mentor' ? (profile?.is_verified ? 'gold' : '') : 'terracotta'}`} style={{ fontSize: '0.62rem', padding: '0.1rem 0.4rem' }}>
-                      {profile?.role === 'mentor' ? (profile?.is_verified ? 'Verified Mentor' : 'Mentor (Pending)') : 'Student'}
+                    <span className={`badge-dept ${profile?.role === 'admin' ? 'gold' : profile?.role === 'mentor' ? (profile?.is_verified ? 'gold' : '') : 'terracotta'}`} style={{ fontSize: '0.62rem', padding: '0.1rem 0.4rem' }}>
+                      {profile?.role === 'admin' ? 'Administrator' : profile?.role === 'mentor' ? (profile?.is_verified ? 'Verified Mentor' : 'Mentor (Pending)') : 'Student'}
                     </span>
                     {profile?.department && (
                       <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
@@ -328,6 +344,16 @@ export const Navbar = () => {
               style={{ fontSize: '1rem', fontWeight: 500, color: 'var(--text-primary)' }}
             >
               Journey Timeline
+            </Link>
+          )}
+
+          {user && profile?.role === 'admin' && (
+            <Link
+              to="/admin/mentors"
+              onClick={() => setMobileMenuOpen(false)}
+              style={{ fontSize: '1rem', fontWeight: 500, color: 'var(--text-primary)' }}
+            >
+              Mentor Verification
             </Link>
           )}
 
