@@ -34,11 +34,11 @@ export const AuthProvider = ({ children }) => {
         // If row doesn't exist yet, we can check auth user metadata as fallback
         const { data: userData } = await supabase.auth.getUser();
         const meta = userData?.user?.user_metadata || {};
+        const fallbackRole = meta.role === 'mentor' ? 'mentor' : meta.role === 'admin' ? 'admin' : 'student';
         const fallbackProfile = {
           id: userId,
           full_name: meta.full_name || 'Community Member',
-          email: fallbackEmail || userData?.user?.email || '',
-          role: meta.role || 'student',
+          role: fallbackRole,
           department: meta.department || 'B.Tech',
           is_verified: false,
         };
@@ -47,7 +47,7 @@ export const AuthProvider = ({ children }) => {
         try {
           const { data: inserted, error: insErr } = await supabase
             .from('profiles')
-            .upsert([fallbackProfile])
+            .upsert([fallbackProfile], { onConflict: 'id' })
             .select('id, full_name, department, role, is_verified, created_at')
             .maybeSingle();
 
@@ -169,28 +169,9 @@ export const AuthProvider = ({ children }) => {
     }
 
     if (createdUser) {
-      // Insert corresponding row into profiles table for new user
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert([
-          {
-            id: createdUser.id,
-            full_name: fullName.trim(),
-            email: trimmedEmail,
-            role,
-            department,
-            is_verified: false, // Mentors cannot self-verify; controlled by academic admin
-          },
-        ]);
-
-      if (profileError) {
-        if (profileError.code === '23505' || profileError.message?.toLowerCase().includes('duplicate key')) {
-          throw new Error('⚠️ This email is already registered. Please use a different Gmail account or sign in with this email.');
-        }
-        console.warn('Could not insert profile immediately (RLS or confirmation may apply):', profileError.message);
-      }
-
-      // Update local state if session exists
+      // PostgreSQL trigger 'on_auth_user_created' automatically creates the profile row
+      // in public.profiles with the signup metadata (full_name, role, department, is_verified=false).
+      // If a session exists immediately (e.g. email confirmation disabled), hydrate state:
       if (data.session) {
         setUser(createdUser);
         await fetchProfile(createdUser.id, trimmedEmail);
