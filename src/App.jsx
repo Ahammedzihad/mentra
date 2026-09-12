@@ -19,6 +19,7 @@ import { BrowseMentorsPage } from './pages/BrowseMentorsPage';
 import { AdminMentorVerificationPage } from './pages/AdminMentorVerificationPage';
 import { AuthErrorPage } from './pages/AuthErrorPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
+import { MentorAiPage } from './pages/MentorAiPage';
 
 function AuthRecoveryListener() {
   const navigate = useNavigate();
@@ -101,6 +102,14 @@ export function App() {
                 element={
                   <ProtectedRoute allowedRole="mentor">
                     <MentorPendingPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/mentor/ai"
+                element={
+                  <ProtectedRoute allowedRole="mentor" requireVerified={true}>
+                    <MentorAiPage />
                   </ProtectedRoute>
                 }
               />

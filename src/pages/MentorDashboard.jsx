@@ -15,7 +15,8 @@ import {
   LogOut,
   Users,
   Check,
-  X
+  X,
+  Sparkles
 } from 'lucide-react';
 
 export const MentorDashboard = () => {
@@ -363,6 +364,128 @@ export const MentorDashboard = () => {
               </span>
             </div>
           </div>
+        </div>
+
+        {/* Mentor Studio Navigation Bar */}
+        <div
+          style={{
+            backgroundColor: 'var(--color-white)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-md)',
+            padding: '0.85rem 1.5rem',
+            marginBottom: '2rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '1rem',
+            boxShadow: 'var(--shadow-subtle)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
+            <Link
+              to="/mentor"
+              style={{
+                fontSize: '0.925rem',
+                fontWeight: 600,
+                color: 'var(--color-primary-dark)',
+                borderBottom: '2px solid var(--color-terracotta)',
+                paddingBottom: '0.25rem',
+                textDecoration: 'none',
+              }}
+            >
+              Overview
+            </Link>
+            <Link
+              to="/projects"
+              style={{
+                fontSize: '0.925rem',
+                fontWeight: 500,
+                color: 'var(--text-secondary)',
+                paddingBottom: '0.25rem',
+                textDecoration: 'none',
+              }}
+            >
+              Projects
+            </Link>
+            <Link
+              to="/journey"
+              style={{
+                fontSize: '0.925rem',
+                fontWeight: 500,
+                color: 'var(--text-secondary)',
+                paddingBottom: '0.25rem',
+                textDecoration: 'none',
+              }}
+            >
+              Journey
+            </Link>
+            <Link
+              to="/mentor/ai"
+              style={{
+                fontSize: '0.925rem',
+                fontWeight: 600,
+                color: 'var(--color-terracotta)',
+                paddingBottom: '0.25rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                textDecoration: 'none',
+              }}
+            >
+              <Sparkles size={15} style={{ color: 'var(--color-terracotta)' }} />
+              <span>Personal AI</span>
+            </Link>
+          </div>
+
+          <Link
+            to="/mentor/ai"
+            className="btn btn-primary btn-sm"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
+          >
+            <Sparkles size={14} />
+            <span>Consult Personal AI</span>
+          </Link>
+        </div>
+
+        {/* Mentor Personal AI Spotlight Banner */}
+        <div
+          className="card-academic"
+          style={{
+            marginBottom: '2.5rem',
+            backgroundColor: 'var(--color-white)',
+            border: '1px solid var(--border-subtle)',
+            borderLeft: '4px solid var(--color-terracotta)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '1.5rem',
+            padding: '1.75rem 2rem',
+          }}
+        >
+          <div style={{ maxWidth: '640px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+              <span className="badge-dept terracotta">Faculty Advisory Intelligence</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Tailored for Verified Mentors</span>
+            </div>
+            <h3 className="font-serif" style={{ fontSize: '1.35rem', marginBottom: '0.35rem', color: 'var(--color-primary-dark)' }}>
+              Personal AI Assistant
+            </h3>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.55 }}>
+              Your personal intelligence companion for mentorship planning, preparing mentee check-ins, structuring research roadmaps, and providing constructive feedback on student projects.
+            </p>
+          </div>
+
+          <Link
+            to="/mentor/ai"
+            className="btn btn-primary"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.25rem' }}
+          >
+            <Sparkles size={16} />
+            <span>Open Personal AI</span>
+            <ArrowRight size={15} />
+          </Link>
         </div>
 
         {error && (

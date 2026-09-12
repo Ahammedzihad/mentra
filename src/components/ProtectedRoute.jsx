@@ -3,7 +3,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { AlertCircle, RefreshCw, LogOut } from 'lucide-react';
 
-export const ProtectedRoute = ({ children, allowedRole }) => {
+export const ProtectedRoute = ({ children, allowedRole, requireVerified = false }) => {
   const { user, profile, loading, refreshProfile, signOut } = useAuth();
   const location = useLocation();
   const [retrying, setRetrying] = useState(false);
@@ -120,6 +120,11 @@ export const ProtectedRoute = ({ children, allowedRole }) => {
       return <Navigate to="/student" replace />;
     }
     return <Navigate to="/" replace />;
+  }
+
+  // 4a. Mentor Verification Check (if requireVerified is true)
+  if (requireVerified && profile && profile.role === 'mentor' && !profile.is_verified) {
+    return <Navigate to="/mentor/pending" replace />;
   }
 
   // 5. Authorized State

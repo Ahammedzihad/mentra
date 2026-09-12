@@ -144,19 +144,38 @@ export const Navbar = () => {
 
 
           {user && profile?.role === 'mentor' && profile?.is_verified === true && (
-            <Link
-              to="/mentor"
-              style={{
-                fontSize: '0.9rem',
-                fontWeight: isActive('/mentor') ? '600' : '500',
-                color: isActive('/mentor') ? 'var(--color-primary-dark)' : 'var(--text-secondary)',
-                borderBottom: isActive('/mentor') ? '2px solid var(--color-terracotta)' : '2px solid transparent',
-                paddingBottom: '0.25rem',
-                transition: 'var(--transition-smooth)',
-              }}
-            >
-              Mentor Studio
-            </Link>
+            <>
+              <Link
+                to="/mentor"
+                style={{
+                  fontSize: '0.9rem',
+                  fontWeight: isActive('/mentor') ? '600' : '500',
+                  color: isActive('/mentor') ? 'var(--color-primary-dark)' : 'var(--text-secondary)',
+                  borderBottom: isActive('/mentor') ? '2px solid var(--color-terracotta)' : '2px solid transparent',
+                  paddingBottom: '0.25rem',
+                  transition: 'var(--transition-smooth)',
+                }}
+              >
+                Mentor Studio
+              </Link>
+              <Link
+                to="/mentor/ai"
+                style={{
+                  fontSize: '0.9rem',
+                  fontWeight: isActive('/mentor/ai') ? '600' : '500',
+                  color: isActive('/mentor/ai') ? 'var(--color-terracotta)' : 'var(--text-secondary)',
+                  borderBottom: isActive('/mentor/ai') ? '2px solid var(--color-terracotta)' : '2px solid transparent',
+                  paddingBottom: '0.25rem',
+                  transition: 'var(--transition-smooth)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem'
+                }}
+              >
+                <Sparkles size={14} style={{ color: 'var(--color-terracotta)' }} />
+                <span>Personal AI</span>
+              </Link>
+            </>
           )}
 
           {user && profile?.role === 'student' && (
@@ -360,13 +379,30 @@ export const Navbar = () => {
 
 
           {user && profile?.role === 'mentor' && profile?.is_verified === true && (
-            <Link
-              to="/mentor"
-              onClick={() => setMobileMenuOpen(false)}
-              style={{ fontSize: '1rem', fontWeight: 500, color: 'var(--text-primary)' }}
-            >
-              Mentor Studio
-            </Link>
+            <>
+              <Link
+                to="/mentor"
+                onClick={() => setMobileMenuOpen(false)}
+                style={{ fontSize: '1rem', fontWeight: 500, color: 'var(--text-primary)' }}
+              >
+                Mentor Studio
+              </Link>
+              <Link
+                to="/mentor/ai"
+                onClick={() => setMobileMenuOpen(false)}
+                style={{
+                  fontSize: '1rem',
+                  fontWeight: 500,
+                  color: 'var(--color-terracotta)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.45rem'
+                }}
+              >
+                <Sparkles size={16} />
+                <span>Personal AI</span>
+              </Link>
+            </>
           )}
 
           {user && profile?.role === 'student' && (
