@@ -41,7 +41,8 @@ function generateContextualFacultyReply(
     menteeContext = `You are registered as a verified faculty mentor in ${department}.`;
   }
 
-  const querySummary = message.length > 90 ? message.slice(0, 90).trim() + '...' : message.trim();
+  const rawSummary = message.length > 90 ? message.slice(0, 90).trim() + '...' : message.trim();
+  const querySummary = rawSummary.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   return `${salutation}
 
@@ -73,7 +74,8 @@ function generateContextualMentorReply(
     projectContext = `Welcome to Mentra! As you begin your academic exploration in ${department}, logging your first project milestone will help build a strong, demonstrable portfolio for research and mentor reviews.`;
   }
 
-  const querySummary = message.length > 90 ? message.slice(0, 90).trim() + '...' : message.trim();
+  const rawSummary = message.length > 90 ? message.slice(0, 90).trim() + '...' : message.trim();
+  const querySummary = rawSummary.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   return `${salutation}
 
@@ -438,7 +440,7 @@ GUIDANCE PRINCIPLES:
     contents.push({ role: 'user', parts: [{ text: message.trim() }] });
 
     // 11. Call Google Gemini API (Gemini 3.6 Flash)
-    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
+    const geminiEndpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
 
     const geminiPayload = {
       systemInstruction: {
@@ -453,7 +455,10 @@ GUIDANCE PRINCIPLES:
 
     const geminiResponse = await fetch(geminiEndpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': geminiApiKey,
+      },
       body: JSON.stringify(geminiPayload),
     });
 
