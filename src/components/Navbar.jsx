@@ -126,6 +126,22 @@ export const Navbar = () => {
             </Link>
           )}
 
+          {user && profile?.role === 'admin' && (
+            <Link
+              to="/admin/mentors"
+              style={{
+                fontSize: '0.9rem',
+                fontWeight: isActive('/admin/mentors') ? '600' : '500',
+                color: isActive('/admin/mentors') ? 'var(--color-primary-dark)' : 'var(--text-secondary)',
+                borderBottom: isActive('/admin/mentors') ? '2px solid var(--color-terracotta)' : '2px solid transparent',
+                paddingBottom: '0.25rem',
+                transition: 'var(--transition-smooth)',
+              }}
+            >
+              Admin
+            </Link>
+          )}
+
 
           {user && profile?.role === 'mentor' && profile?.is_verified === true && (
             <Link
@@ -329,6 +345,16 @@ export const Navbar = () => {
               style={{ fontSize: '1rem', fontWeight: 500, color: 'var(--text-primary)' }}
             >
               Journey Timeline
+            </Link>
+          )}
+
+          {user && profile?.role === 'admin' && (
+            <Link
+              to="/admin/mentors"
+              onClick={() => setMobileMenuOpen(false)}
+              style={{ fontSize: '1rem', fontWeight: 500, color: 'var(--text-primary)' }}
+            >
+              Admin
             </Link>
           )}
 
