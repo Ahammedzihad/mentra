@@ -7,6 +7,7 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
   // Fetch the user's profile from the existing `profiles` table
   const fetchProfile = useCallback(async (userId, fallbackEmail = '') => {
@@ -93,7 +94,13 @@ export const AuthProvider = ({ children }) => {
 
     initAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsPasswordRecovery(true);
+      } else if (event === 'SIGNED_OUT') {
+        setIsPasswordRecovery(false);
+      }
+
       if (session?.user) {
         setUser(session.user);
         await fetchProfile(session.user.id, session.user.email);
@@ -226,6 +233,41 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Reset Password for Email: Sends recovery email with dynamic origin redirect
+  const resetPasswordForEmail = async (email) => {
+    if (!isSupabaseConfigured) {
+      throw new Error('Supabase credentials are not configured in .env yet.');
+    }
+
+    const origin =
+      typeof window !== 'undefined' && window.location.origin
+        ? window.location.origin
+        : 'https://mentra-eta.vercel.app';
+    const redirectTo = `${origin}/reset-password`;
+
+    const { data, error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo,
+    });
+
+    if (error) throw error;
+    return data;
+  };
+
+  // Update Password: Calls supabase.auth.updateUser for authenticated/recovery session
+  const updatePassword = async (newPassword) => {
+    if (!isSupabaseConfigured) {
+      throw new Error('Supabase credentials are not configured in .env yet.');
+    }
+
+    const { data, error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (error) throw error;
+    setIsPasswordRecovery(false);
+    return data;
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -236,6 +278,10 @@ export const AuthProvider = ({ children }) => {
         signIn,
         signOut,
         refreshProfile,
+        resetPasswordForEmail,
+        updatePassword,
+        isPasswordRecovery,
+        setIsPasswordRecovery,
         isConfigured: isSupabaseConfigured,
       }}
     >
