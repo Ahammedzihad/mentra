@@ -59,7 +59,7 @@ export const BrowseMentorsPage = () => {
       // Join with mentor profile to display mentor name, department, bio without exposing PII
       const { data: requestsData, error: requestsErr } = await supabase
         .from('mentorships')
-        .select('id, mentor_id, student_id, status, created_at, mentor:mentor_id(id, full_name, department, role, is_verified, bio)')
+        .select('id, mentor_id, student_id, status, created_at, mentor:profiles!mentor_id(id, full_name, department, role, is_verified, bio)')
         .eq('student_id', user.id)
         .order('created_at', { ascending: false });
 
@@ -80,10 +80,19 @@ export const BrowseMentorsPage = () => {
 
   // Request Mentorship behavior (Step 2)
   const handleRequestMentorship = async (mentorId) => {
-    if (!user || submittingMentorId) return;
+    if (!user) {
+      setActionError('You must be signed in as an authenticated student to request mentorship.');
+      return;
+    }
+    if (submittingMentorId) return;
 
     setActionError(null);
     setActionSuccess(null);
+
+    if (user.id === mentorId) {
+      setActionError('You cannot request mentorship from yourself.');
+      return;
+    }
 
     // Check whether the student already has an active request with this mentor
     const existingReq = requests.find((r) => r.mentor_id === mentorId);
@@ -104,7 +113,7 @@ export const BrowseMentorsPage = () => {
           mentor_id: mentorId,
           status: 'pending'
         })
-        .select('id, mentor_id, student_id, status, created_at, mentor:mentor_id(id, full_name, department, role, is_verified, bio)')
+        .select('id, mentor_id, student_id, status, created_at, mentor:profiles!mentor_id(id, full_name, department, role, is_verified, bio)')
         .single();
 
       if (error) throw error;
@@ -114,11 +123,17 @@ export const BrowseMentorsPage = () => {
       setActionSuccess('Mentorship request submitted successfully. Status is now Pending.');
     } catch (err) {
       console.error('Request mentorship failed:', err);
-      if (err.code === '23505' || err.message?.includes('duplicate') || err.message?.includes('unique')) {
+      if (err.code === '23505' || err.message?.includes('duplicate') || err.message?.includes('unique') || err.message?.includes('mentorships_unique_student_mentor')) {
         setActionError('A mentorship request already exists for this mentor.');
         fetchData();
+      } else if (err.code === '23514' || err.message?.includes('mentorships_student_not_mentor')) {
+        setActionError('You cannot request mentorship from yourself.');
+      } else if (err.code === '23503' || err.message?.includes('mentorships_student_id_fkey')) {
+        setActionError('Your student profile was not found. Please re-login or update your profile.');
+      } else if (err.code === '42501' || err.message?.includes('row-level security')) {
+        setActionError('Unable to request mentorship: this mentor may not be verified or you may not be authorized.');
       } else {
-        setActionError('Failed to submit mentorship request. Please try again.');
+        setActionError(err.message || 'Failed to submit mentorship request. Please try again.');
       }
     } finally {
       setSubmittingMentorId(null);

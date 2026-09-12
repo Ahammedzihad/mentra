@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -76,7 +76,7 @@ export const StudentDashboard = () => {
       // 4. Fetch own mentorship requests (Phase 2 connection layer)
       const { data: mentorshipsData, error: mentorErr } = await supabase
         .from('mentorships')
-        .select('id, mentor_id, status, created_at, mentor:mentor_id(id, full_name, department, role, is_verified)')
+        .select('id, mentor_id, status, created_at, mentor:profiles!mentor_id(id, full_name, department, role, is_verified)')
         .eq('student_id', user.id)
         .order('created_at', { ascending: false });
 

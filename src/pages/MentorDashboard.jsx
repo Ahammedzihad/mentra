@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -52,7 +52,7 @@ export const MentorDashboard = () => {
       // Strictly do not query email to comply with HIGH-01 column privileges
       const { data: reqData, error: reqErr } = await supabase
         .from('mentorships')
-        .select('id, student_id, mentor_id, status, created_at, student:student_id(id, full_name, department, role)')
+        .select('id, student_id, mentor_id, status, created_at, student:profiles!student_id(id, full_name, department, role)')
         .eq('mentor_id', user.id)
         .order('created_at', { ascending: false });
 
