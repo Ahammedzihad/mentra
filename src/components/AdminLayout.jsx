@@ -38,6 +38,12 @@ const MENTOR_CATEGORIES = [
   { id: 'pending', label: 'Pending Verification', icon: Clock },
 ];
 
+const PROJECT_VIEWS = [
+  { id: 'all', label: 'All Projects', icon: FolderGit2 },
+  { id: 'student', label: 'Student Projects', icon: GraduationCap },
+  { id: 'mentor', label: 'Mentor Projects', icon: Users },
+];
+
 export const AdminLayout = ({ children, activeTab }) => {
   const { profile } = useAuth();
   const location = useLocation();
@@ -45,6 +51,7 @@ export const AdminLayout = ({ children, activeTab }) => {
 
   const currentCourse = searchParams.get('course') || 'All';
   const currentStatus = searchParams.get('status') || 'all';
+  const currentView = searchParams.get('view') || 'all';
 
   return (
     <div style={{ backgroundColor: 'var(--color-warm-ivory)', minHeight: 'calc(100vh - 4.25rem)' }}>
@@ -186,7 +193,7 @@ export const AdminLayout = ({ children, activeTab }) => {
           </nav>
         </div>
 
-        {/* Secondary Sub-Navigation Bar for Students */}
+        {/* Sub-Navigation Bar for Students */}
         {activeTab === 'students' && (
           <div
             style={{
@@ -238,7 +245,7 @@ export const AdminLayout = ({ children, activeTab }) => {
           </div>
         )}
 
-        {/* Secondary Sub-Navigation Bar for Mentors */}
+        {/* Sub-Navigation Bar for Mentors */}
         {activeTab === 'mentors' && (
           <div
             style={{
@@ -287,6 +294,62 @@ export const AdminLayout = ({ children, activeTab }) => {
                   >
                     <CatIcon size={13} />
                     <span>{cat.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Sub-Navigation Bar for Projects */}
+        {activeTab === 'projects' && (
+          <div
+            style={{
+              backgroundColor: 'var(--color-warm-ivory)',
+              borderTop: '1px solid var(--border-subtle)',
+              padding: '0.5rem 0',
+            }}
+          >
+            <div
+              className="container"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                overflowX: 'auto',
+                scrollbarWidth: 'none',
+              }}
+            >
+              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginRight: '0.5rem', whiteSpace: 'nowrap' }}>
+                View:
+              </span>
+              {PROJECT_VIEWS.map((v) => {
+                const isCurrent = currentView.toLowerCase() === v.id.toLowerCase();
+                const linkTo = v.id === 'all' ? '/admin/projects' : `/admin/projects?view=${v.id}`;
+                const ViewIcon = v.icon;
+
+                return (
+                  <Link
+                    key={v.id}
+                    to={linkTo}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      padding: '0.3rem 0.75rem',
+                      borderRadius: '16px',
+                      fontSize: '0.8rem',
+                      fontWeight: isCurrent ? 600 : 500,
+                      textDecoration: 'none',
+                      whiteSpace: 'nowrap',
+                      backgroundColor: isCurrent ? 'var(--color-primary-dark)' : 'transparent',
+                      color: isCurrent ? '#FFFFFF' : 'var(--text-secondary)',
+                      border: isCurrent ? '1px solid var(--color-primary-dark)' : '1px solid transparent',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <ViewIcon size={13} />
+                    <span>{v.label}</span>
                   </Link>
                 );
               })}
