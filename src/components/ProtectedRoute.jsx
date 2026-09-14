@@ -111,7 +111,7 @@ export const ProtectedRoute = ({ children, allowedRole, requireVerified = false 
   // 4. Role Authorization Check
   if (allowedRole && profile && profile.role !== allowedRole) {
     if (profile.role === 'admin') {
-      return <Navigate to="/admin/mentors" replace />;
+      return <Navigate to="/admin" replace />;
     }
     if (profile.role === 'mentor') {
       return <Navigate to="/mentor" replace />;

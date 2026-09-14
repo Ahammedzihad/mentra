@@ -16,6 +16,11 @@ import { ProjectsPage } from './pages/ProjectsPage';
 import { JourneyPage } from './pages/JourneyPage';
 import { AiAdvisorPage } from './pages/AiAdvisorPage';
 import { BrowseMentorsPage } from './pages/BrowseMentorsPage';
+import { AdminDashboardPage } from './pages/AdminDashboardPage';
+import { AdminStudentsPage } from './pages/AdminStudentsPage';
+import { AdminMentorsPage } from './pages/AdminMentorsPage';
+import { AdminProjectsPage } from './pages/AdminProjectsPage';
+import { AdminReportsPage } from './pages/AdminReportsPage';
 import { AdminMentorVerificationPage } from './pages/AdminMentorVerificationPage';
 import { AuthErrorPage } from './pages/AuthErrorPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
@@ -116,14 +121,45 @@ export function App() {
 
               {/* Admin Protected Routes */}
               <Route
-                path="/admin/mentors"
+                path="/admin"
                 element={
                   <ProtectedRoute allowedRole="admin">
-                    <AdminMentorVerificationPage />
+                    <AdminDashboardPage />
                   </ProtectedRoute>
                 }
               />
-              <Route path="/admin" element={<Navigate to="/admin/mentors" replace />} />
+              <Route
+                path="/admin/students"
+                element={
+                  <ProtectedRoute allowedRole="admin">
+                    <AdminStudentsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/mentors"
+                element={
+                  <ProtectedRoute allowedRole="admin">
+                    <AdminMentorsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/projects"
+                element={
+                  <ProtectedRoute allowedRole="admin">
+                    <AdminProjectsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/reports"
+                element={
+                  <ProtectedRoute allowedRole="admin">
+                    <AdminReportsPage />
+                  </ProtectedRoute>
+                }
+              />
 
               {/* General Protected Routes */}
               <Route

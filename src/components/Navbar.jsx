@@ -128,17 +128,17 @@ export const Navbar = () => {
 
           {user && profile?.role === 'admin' && (
             <Link
-              to="/admin/mentors"
+              to="/admin"
               style={{
                 fontSize: '0.9rem',
-                fontWeight: isActive('/admin/mentors') ? '600' : '500',
-                color: isActive('/admin/mentors') ? 'var(--color-primary-dark)' : 'var(--text-secondary)',
-                borderBottom: isActive('/admin/mentors') ? '2px solid var(--color-terracotta)' : '2px solid transparent',
+                fontWeight: location.pathname.startsWith('/admin') ? '600' : '500',
+                color: location.pathname.startsWith('/admin') ? 'var(--color-primary-dark)' : 'var(--text-secondary)',
+                borderBottom: location.pathname.startsWith('/admin') ? '2px solid var(--color-terracotta)' : '2px solid transparent',
                 paddingBottom: '0.25rem',
                 transition: 'var(--transition-smooth)',
               }}
             >
-              Admin
+              Admin Portal
             </Link>
           )}
 
@@ -239,7 +239,7 @@ export const Navbar = () => {
           {user ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.9rem' }}>
               <Link
-                to={profile?.role === 'admin' ? '/admin/mentors' : profile?.role === 'mentor' ? '/mentor' : '/student'}
+                to={profile?.role === 'admin' ? '/admin' : profile?.role === 'mentor' ? '/mentor' : '/student'}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -369,11 +369,15 @@ export const Navbar = () => {
 
           {user && profile?.role === 'admin' && (
             <Link
-              to="/admin/mentors"
+              to="/admin"
               onClick={() => setMobileMenuOpen(false)}
-              style={{ fontSize: '1rem', fontWeight: 500, color: 'var(--text-primary)' }}
+              style={{
+                fontSize: '1rem',
+                fontWeight: 500,
+                color: location.pathname.startsWith('/admin') ? 'var(--color-terracotta)' : 'var(--text-primary)',
+              }}
             >
-              Admin
+              Admin Portal
             </Link>
           )}
 
