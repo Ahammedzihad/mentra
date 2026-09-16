@@ -4,6 +4,7 @@ import { supabase, isSupabaseConfigured } from '../../frontend/lib/supabase';
 import { CreateProjectModal } from './CreateProjectModal';
 import { EditProjectModal } from './EditProjectModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { VISIBILITY_OPTIONS } from './projectVisibilityOptions';
 import {
   FolderPlus,
   Search,
@@ -334,6 +335,11 @@ export const ProjectsPage = () => {
                     day: 'numeric',
                   })
                 : 'Archived';
+              const visibilityOption =
+                typeof project.visibility === 'string'
+                  ? VISIBILITY_OPTIONS.find((opt) => opt.id === project.visibility.toLowerCase()) || null
+                  : null;
+              const VisibilityIcon = visibilityOption?.icon;
 
               return (
                 <article
@@ -358,7 +364,7 @@ export const ProjectsPage = () => {
                         marginBottom: '0.75rem',
                       }}
                     >
-                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
                         {creatorDept ? (
                           <span className="badge-dept terracotta">{creatorDept}</span>
                         ) : (
@@ -372,6 +378,21 @@ export const ProjectsPage = () => {
                         {isOwner && (
                           <span className="badge-dept gold" style={{ fontSize: '0.65rem' }}>
                             Your Project
+                          </span>
+                        )}
+                        {visibilityOption && (
+                          <span
+                            className="badge-dept"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.3rem',
+                              fontSize: '0.68rem',
+                            }}
+                            title={visibilityOption.description}
+                          >
+                            {VisibilityIcon && <VisibilityIcon size={11} aria-hidden="true" />}
+                            <span>{visibilityOption.label}</span>
                           </span>
                         )}
                       </div>
