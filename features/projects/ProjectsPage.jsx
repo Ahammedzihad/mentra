@@ -4,9 +4,11 @@ import { supabase, isSupabaseConfigured } from '../../frontend/lib/supabase';
 import { CreateProjectModal } from './CreateProjectModal';
 import { EditProjectModal } from './EditProjectModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { ProjectDetailModal } from './ProjectDetailModal';
 import { VISIBILITY_OPTIONS } from './projectVisibilityOptions';
 import {
   FolderPlus,
+  Eye,
   Search,
   FolderGit2,
   Calendar,
@@ -32,6 +34,7 @@ export const ProjectsPage = () => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
   const [deletingProject, setDeletingProject] = useState(null);
+  const [viewingProject, setViewingProject] = useState(null);
 
   const fetchProjects = useCallback(async () => {
     if (!isSupabaseConfigured) {
@@ -483,9 +486,18 @@ export const ProjectsPage = () => {
                       </div>
                     </div>
 
-                    {/* Owner Action Buttons (Strictly only for the owner) */}
+                    {/* Card Actions: Details (All) + Edit/Delete (Owner Only) */}
                     {isOwner ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <button
+                          onClick={() => setViewingProject(project)}
+                          className="btn btn-secondary btn-sm"
+                          style={{ padding: '0.35rem 0.65rem' }}
+                          title="View Project Details"
+                        >
+                          <Eye size={13} />
+                          <span>Details</span>
+                        </button>
                         <button
                           onClick={() => setEditingProject(project)}
                           className="btn btn-secondary btn-sm"
@@ -506,8 +518,19 @@ export const ProjectsPage = () => {
                         </button>
                       </div>
                     ) : (
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                        {isCreatorVerifiedMentor ? 'Guided by Verified Faculty' : 'Collegiate Initiative'}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                        <button
+                          onClick={() => setViewingProject(project)}
+                          className="btn btn-secondary btn-sm"
+                          style={{ padding: '0.35rem 0.65rem' }}
+                          title="View Project Details"
+                        >
+                          <Eye size={13} />
+                          <span>Details</span>
+                        </button>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                          {isCreatorVerifiedMentor ? 'Guided by Verified Faculty' : 'Collegiate Initiative'}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -519,6 +542,16 @@ export const ProjectsPage = () => {
       </div>
 
       {/* Modals */}
+      <ProjectDetailModal
+        isOpen={Boolean(viewingProject)}
+        project={viewingProject}
+        onClose={() => setViewingProject(null)}
+        onProjectUpdated={(updated) => {
+          handleProjectUpdated(updated);
+          setViewingProject(updated);
+        }}
+      />
+
       <CreateProjectModal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
