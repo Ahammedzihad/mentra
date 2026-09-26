@@ -11,6 +11,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { ProjectVisibilitySelector } from './ProjectVisibilitySelector';
+import { ProjectTagsInput } from './ProjectTagsInput';
 import { supabase, isSupabaseConfigured } from '../../frontend/lib/supabase';
 import { useAuth } from '../../frontend/context/AuthContext';
 
@@ -20,6 +21,7 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
   const { user, profile } = useAuth();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [tags, setTags] = useState([]);
   const [visibility, setVisibility] = useState('college');
   const [shares, setShares] = useState([]);
   const [loadingShares, setLoadingShares] = useState(false);
@@ -38,6 +40,7 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
     if (project) {
       setTitle(project.title || '');
       setDescription(project.description || '');
+      setTags(Array.isArray(project.tags) ? [...project.tags] : []);
       setVisibility(project.visibility || 'college');
       setError(null);
       setSharesError(null);
@@ -255,6 +258,7 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
           title: title.trim(),
           description: description.trim(),
           visibility: visibility,
+          tags: tags,
         })
         .eq('id', project.id)
         .eq('user_id', user.id) // Enforce user_id match
@@ -277,7 +281,11 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
       }, 500);
     } catch (err) {
       console.error('Error updating project:', err);
-      setError(err.message || 'Failed to update project.');
+      if (err?.message?.includes('tags_max_count') || err?.details?.includes('tags_max_count')) {
+        setError('Too many tags — please use 6 or fewer.');
+      } else {
+        setError(err.message || 'Failed to update project.');
+      }
     } finally {
       setLoading(false);
     }
@@ -378,6 +386,13 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
               required
             />
           </div>
+
+          {/* Project Tags Input */}
+          <ProjectTagsInput
+            tags={tags}
+            onChange={setTags}
+            disabled={loading}
+          />
 
           {/* Visibility Selector */}
           <ProjectVisibilitySelector

@@ -444,6 +444,71 @@ export const ProjectsPage = () => {
                     >
                       {project.description}
                     </p>
+
+                    {/* Project Tags (Phase 4 Step 3) */}
+                    {Array.isArray(project.tags) && project.tags.length > 0 && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: '0.4rem',
+                          marginBottom: '1.25rem',
+                        }}
+                      >
+                        {project.tags.slice(0, 3).map((tag, idx) => (
+                          <span
+                            key={`${tag}-${idx}`}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              backgroundColor: 'var(--color-soft-beige-light)',
+                              border: '1px solid var(--border-subtle)',
+                              borderRadius: 'var(--radius-sm)',
+                              color: 'var(--color-primary-dark)',
+                              fontSize: '0.78rem',
+                              fontWeight: 500,
+                              padding: '0.2rem 0.55rem',
+                              overflowWrap: 'anywhere',
+                              wordBreak: 'break-word',
+                              cursor: 'default',
+                              lineHeight: 1.4,
+                              transition: 'var(--transition-smooth)',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.color = 'var(--color-terracotta)';
+                              e.currentTarget.style.borderColor = 'rgba(184, 111, 82, 0.4)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.color = 'var(--color-primary-dark)';
+                              e.currentTarget.style.borderColor = 'var(--border-subtle)';
+                            }}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                        {project.tags.length > 3 && (
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              backgroundColor: 'var(--color-soft-beige-light)',
+                              border: '1px solid var(--border-subtle)',
+                              borderRadius: 'var(--radius-sm)',
+                              color: 'var(--text-secondary)',
+                              fontSize: '0.78rem',
+                              fontWeight: 500,
+                              padding: '0.2rem 0.55rem',
+                              overflowWrap: 'anywhere',
+                              wordBreak: 'break-word',
+                              cursor: 'default',
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            +{project.tags.length - 3} more
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Card Bottom: Creator & Actions */}

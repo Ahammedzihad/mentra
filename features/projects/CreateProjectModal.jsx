@@ -11,6 +11,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { ProjectVisibilitySelector } from './ProjectVisibilitySelector';
+import { ProjectTagsInput } from './ProjectTagsInput';
 import { supabase, isSupabaseConfigured } from '../../frontend/lib/supabase';
 import { useAuth } from '../../frontend/context/AuthContext';
 
@@ -20,6 +21,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
   const { user, profile } = useAuth();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [tags, setTags] = useState([]);
   const [visibility, setVisibility] = useState('college'); // Default: College
   const [stagedUsers, setStagedUsers] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -127,7 +129,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
     setLoading(true);
 
     try {
-      // 1. Insert into projects with visibility
+      // 1. Insert into projects with visibility and tags
       const { data: projectData, error: insertError } = await supabase
         .from('projects')
         .insert([
@@ -136,6 +138,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
             title: title.trim(),
             description: description.trim(),
             visibility: visibility,
+            tags: tags,
           },
         ])
         .select('*, profiles:user_id(full_name, department, role, is_verified)')
@@ -177,6 +180,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
         if (onProjectCreated) onProjectCreated(projectWithProfile);
         setTitle('');
         setDescription('');
+        setTags([]);
         setVisibility('college');
         setStagedUsers([]);
         setSearchQuery('');
@@ -186,7 +190,11 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
       }, 500);
     } catch (err) {
       console.error('Error creating project:', err);
-      setError(err.message || 'Failed to publish project. Please try again.');
+      if (err?.message?.includes('tags_max_count') || err?.details?.includes('tags_max_count')) {
+        setError('Too many tags — please use 6 or fewer.');
+      } else {
+        setError(err.message || 'Failed to publish project. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -287,6 +295,13 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
               disabled={loading}
             />
           </div>
+
+          {/* Project Tags Input */}
+          <ProjectTagsInput
+            tags={tags}
+            onChange={setTags}
+            disabled={loading}
+          />
 
           {/* Visibility Selector */}
           <ProjectVisibilitySelector
