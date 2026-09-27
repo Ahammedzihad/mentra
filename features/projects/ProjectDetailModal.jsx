@@ -502,6 +502,50 @@ export const ProjectDetailModal = ({
           </p>
         </div>
 
+        {/* Project Tags (Phase 4 Step 4) */}
+        {Array.isArray(currentProject.tags) && currentProject.tags.length > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '0.4rem',
+              marginBottom: '1.75rem',
+            }}
+          >
+            {currentProject.tags.map((tag, idx) => (
+              <span
+                key={`${tag}-${idx}`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  backgroundColor: 'var(--color-soft-beige-light)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  color: 'var(--color-primary-dark)',
+                  fontSize: '0.78rem',
+                  fontWeight: 500,
+                  padding: '0.2rem 0.55rem',
+                  overflowWrap: 'anywhere',
+                  wordBreak: 'break-word',
+                  cursor: 'default',
+                  lineHeight: 1.4,
+                  transition: 'var(--transition-smooth)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = 'var(--color-terracotta)';
+                  e.currentTarget.style.borderColor = 'rgba(184, 111, 82, 0.4)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = 'var(--color-primary-dark)';
+                  e.currentTarget.style.borderColor = 'var(--border-subtle)';
+                }}
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Creator Identity Card */}
         <div
           style={{
