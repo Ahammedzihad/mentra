@@ -117,12 +117,13 @@ export const AuthProvider = ({ children }) => {
   }, [fetchProfile]);
 
   // Sign Up: 1. Create auth user, 2. Create row in profiles table
-  const signUp = async ({ fullName, email, password, role, department }) => {
+  const signUp = async ({ fullName, email, password, role, department, program, specialization }) => {
     if (!isSupabaseConfigured) {
       throw new Error('Supabase credentials are not configured in .env yet.');
     }
 
     const trimmedEmail = email.trim();
+    const resolvedProgram = program || department || 'B.Tech';
 
     // Dynamically set email verification redirect based on current origin:
     // Local development (Vite): http://localhost:5173/login
@@ -141,7 +142,10 @@ export const AuthProvider = ({ children }) => {
         data: {
           full_name: fullName.trim(),
           role,
-          department,
+          department: resolvedProgram,
+          course: resolvedProgram,
+          program: resolvedProgram,
+          specialization: specialization || null,
         },
       },
     });

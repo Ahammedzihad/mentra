@@ -2,9 +2,8 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { CANONICAL_PROGRAMS, PROGRAM_SPECIALIZATIONS, isValidSpecialization } from '../lib/academicPrograms';
 import { UserPlus, AlertCircle, CheckCircle2, Eye, EyeOff } from 'lucide-react';
-
-const DEPARTMENTS = ['B.Tech', 'B.Des', 'BBA', 'BCA'];
 
 export const SignUpPage = () => {
   const { signUp } = useAuth();
@@ -15,11 +14,18 @@ export const SignUpPage = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState('student');
-  const [department, setDepartment] = useState('B.Tech');
+  const [program, setProgram] = useState('');
+  const [specialization, setSpecialization] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [confirmationNotice, setConfirmationNotice] = useState(null);
+
+  const handleProgramChange = (e) => {
+    const nextProgram = e.target.value;
+    setProgram(nextProgram);
+    setSpecialization('');
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -39,6 +45,18 @@ export const SignUpPage = () => {
       setError('Password must contain at least 6 characters.');
       return;
     }
+    if (!program) {
+      setError('Please select your academic program.');
+      return;
+    }
+    if (!specialization) {
+      setError('Please select your degree specialization.');
+      return;
+    }
+    if (!isValidSpecialization(program, specialization)) {
+      setError('The selected specialization is not valid for your chosen program.');
+      return;
+    }
 
     if (!isSupabaseConfigured) {
       setError('Supabase credentials are not configured in your .env file yet. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
@@ -53,7 +71,9 @@ export const SignUpPage = () => {
         email: email.trim(),
         password,
         role,
-        department,
+        department: program,
+        program,
+        specialization,
       });
 
       // If session exists immediately, redirect based on role
@@ -259,24 +279,57 @@ export const SignUpPage = () => {
                 </div>
               </div>
 
-              {/* Department Selection */}
+              {/* Academic Program Selection */}
               <div className="form-group">
-                <label className="form-label" htmlFor="department">
-                  Department <span className="req">*</span>
+                <label className="form-label" htmlFor="program">
+                  Academic Program <span className="req">*</span>
                 </label>
                 <select
-                  id="department"
+                  id="program"
                   className="form-select"
-                  value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
+                  value={program}
+                  onChange={handleProgramChange}
                   disabled={loading}
+                  required
                 >
-                  {DEPARTMENTS.map((dept) => (
-                    <option key={dept} value={dept}>
-                      {dept}
+                  <option value="">Select Academic Program</option>
+                  {CANONICAL_PROGRAMS.map((prog) => (
+                    <option key={prog} value={prog}>
+                      {prog}
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Specialization Selection */}
+              <div className="form-group">
+                <label className="form-label" htmlFor="specialization">
+                  Specialization <span className="req">*</span>
+                </label>
+                <select
+                  id="specialization"
+                  className="form-select"
+                  value={specialization}
+                  onChange={(e) => setSpecialization(e.target.value)}
+                  disabled={loading || !program}
+                  required
+                >
+                  <option value="">
+                    {program ? 'Select Specialization' : 'Select a program first'}
+                  </option>
+                  {program && PROGRAM_SPECIALIZATIONS[program] && (
+                    PROGRAM_SPECIALIZATIONS[program].map((spec) => (
+                      <option key={spec} value={spec}>
+                        {spec}
+                      </option>
+                    ))
+                  )}
+                </select>
+                {!program && (
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                    Please select an academic program above to view specializations.
+                  </p>
+                )}
               </div>
 
               {/* Submit */}
