@@ -25,6 +25,7 @@ import { AdminMentorVerificationPage } from './roles/admin/AdminMentorVerificati
 import { AuthErrorPage } from './pages/AuthErrorPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { MentorAiPage } from '../ai/mentor/MentorAiPage';
+import { DiscoverPage } from '../features/discovery/DiscoverPage';
 
 function AuthRecoveryListener() {
   const navigate = useNavigate();
@@ -167,6 +168,14 @@ export function App() {
                 element={
                   <ProtectedRoute>
                     <JourneyPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/discover"
+                element={
+                  <ProtectedRoute>
+                    <DiscoverPage />
                   </ProtectedRoute>
                 }
               />

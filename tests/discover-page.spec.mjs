@@ -1,0 +1,638 @@
+/**
+ * Mentra Phase 5 Step 3, Subcategory 2 — Discover Page Controls & Route Verification Suite
+ *
+ * Tests:
+ * 1. Authenticated route protection:
+ *    - Unauthenticated visit to /discover redirects to /login
+ *    - Authenticated user accesses /discover cleanly
+ * 2. Page shell and accessible loading state
+ * 3. Error handling & retry:
+ *    - Query failure renders accessible error banner
+ *    - Clicking Retry re-attempts fetch and populates directory on success
+ * 4. Control population:
+ *    - Program dropdown populated from CANONICAL_PROGRAMS
+ *    - Specialization dropdown populated with canonical mapping (all when program empty, scoped when selected)
+ *    - Tag dropdown populated from service's availableTags
+ *    - Year dropdown populated dynamically from loaded profile/owner records (including Graduate)
+ * 5. Program & Specialization dependency and smart reset:
+ *    - Switching program preserves specialization if valid for new program
+ *    - Switching program clears specialization if invalid for new program
+ * 6. Live in-memory filtering and matching counts:
+ *    - Search updates people and project counts (project creator name excluded from project search)
+ *    - Tag filter updates project count only (people unaffected)
+ *    - Program filter scopes people and project owner profiles
+ *    - Specialization filter scopes people and project owner profiles
+ *    - Year filter scopes people and project owner profiles
+ *    - Multi-criteria combination with AND logic
+ * 7. Clear Filters control:
+ *    - Resets all 5 controls (search, tag, program, specialization, year)
+ *    - Restores matching counts to total loaded records
+ * 8. Pre-card boundaries:
+ *    - Confirms no People cards or Project cards are rendered in this subcategory
+ * 9. Navigation boundaries:
+ *    - Confirms /discover was not added to the desktop or mobile navbar
+ */
+
+import { chromium } from 'playwright';
+import { createServer } from 'vite';
+import {
+  CANONICAL_PROGRAMS,
+  PROGRAM_SPECIALIZATIONS,
+} from '../frontend/lib/academicPrograms.js';
+
+let viteServer;
+let browser;
+let baseUrl;
+
+function runAssertion(desc, condition) {
+  if (!condition) {
+    throw new Error(`Assertion failed: ${desc}`);
+  }
+  console.log(`  ✅ PASS: ${desc}`);
+}
+
+function makeMockSession(uid, email = `${uid}@mentra.edu`, meta = {}) {
+  const b64 = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+  const payload = b64({
+    sub: uid,
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    email,
+    user_metadata: meta,
+  });
+  const mockJwt = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${payload}.mock_sig`;
+
+  return {
+    access_token: mockJwt,
+    refresh_token: 'mock-refresh-token',
+    expires_in: 3600,
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    token_type: 'bearer',
+    user: {
+      id: uid,
+      aud: 'authenticated',
+      role: 'authenticated',
+      email,
+      user_metadata: meta,
+      app_metadata: {
+        provider: 'email',
+        providers: ['email'],
+      },
+      created_at: '2026-09-01T00:00:00Z',
+      updated_at: '2026-09-01T00:00:00Z',
+    },
+  };
+}
+
+// Canonical mock profiles matching Phase 5 Step 3 data specifications
+const mockProfiles = [
+  {
+    id: 'user-001',
+    full_name: 'Alex Rivera',
+    role: 'student',
+    program: 'B.Tech',
+    specialization: 'Cyber Security',
+    year: '3rd Year',
+    created_at: '2026-09-01T10:00:00.000Z',
+  },
+  {
+    id: 'user-002',
+    full_name: 'Ahammed Zihad',
+    role: 'student',
+    program: 'BCA',
+    specialization: 'Python Full Stack',
+    year: '2nd Year',
+    created_at: '2026-09-10T12:00:00.000Z',
+  },
+  {
+    id: 'user-003',
+    full_name: 'Dr. Evelyn Reed',
+    role: 'mentor',
+    program: 'B.Tech',
+    specialization: 'AI & Machine Learning',
+    year: null,
+    created_at: '2026-08-15T09:30:00.000Z',
+  },
+  {
+    id: 'user-004',
+    full_name: 'Priya Sharma',
+    role: 'student',
+    program: 'BBA',
+    specialization: 'Digital Marketing',
+    year: '1st Year',
+    created_at: '2026-09-20T14:15:00.000Z',
+  },
+  {
+    id: 'user-005',
+    full_name: 'Maya Lin',
+    role: 'student',
+    program: 'B.Des',
+    specialization: 'Interaction Design (UI/UX systems)',
+    year: '4th Year',
+    created_at: '2026-07-01T08:00:00.000Z',
+  },
+  {
+    id: 'user-006',
+    full_name: 'Rohan Gupta',
+    role: 'student',
+    program: 'BBA',
+    specialization: 'Film Making',
+    year: 'Graduate',
+    created_at: '2026-06-15T08:00:00.000Z',
+  },
+];
+
+// Canonical mock projects
+const mockProjects = [
+  {
+    id: 'proj-001',
+    title: 'Decentralized Consensus Protocol',
+    description: 'A study on distributed ledgers utilizing python and rust.',
+    tags: ['Blockchain', 'Cyber Security', 'Rust'],
+    visibility: 'college',
+    created_at: '2026-09-25T11:00:00.000Z',
+    user_id: 'user-001',
+    profiles: {
+      id: 'user-001',
+      full_name: 'Alex Rivera',
+      role: 'student',
+      program: 'B.Tech',
+      specialization: 'Cyber Security',
+      year: '3rd Year',
+    },
+  },
+  {
+    id: 'proj-002',
+    title: 'Collegiate Mentorship Portal',
+    description: 'Full stack academic networking application built on react.',
+    tags: ['Python', 'Web Dev', 'Education'],
+    visibility: 'college',
+    created_at: '2026-09-28T16:00:00.000Z',
+    user_id: 'user-002',
+    profiles: {
+      id: 'user-002',
+      full_name: 'Ahammed Zihad',
+      role: 'student',
+      program: 'BCA',
+      specialization: 'Python Full Stack',
+      year: '2nd Year',
+    },
+  },
+  {
+    id: 'proj-003',
+    title: 'Neural Vision Classifier',
+    description: 'Deep convolutional network for collegiate campus surveillance.',
+    tags: ['AI', 'Computer Vision', 'PyTorch'],
+    visibility: 'public',
+    created_at: '2026-09-15T09:00:00.000Z',
+    user_id: 'user-003',
+    profiles: {
+      id: 'user-003',
+      full_name: 'Dr. Evelyn Reed',
+      role: 'mentor',
+      program: 'B.Tech',
+      specialization: 'AI & Machine Learning',
+      year: null,
+    },
+  },
+  {
+    id: 'proj-004',
+    title: 'Campus Brand Campaign',
+    description: 'Social analytics and digital outreach strategy for freshmen.',
+    tags: ['Marketing', 'Analytics', 'Social'],
+    visibility: 'college',
+    created_at: '2026-09-22T13:00:00.000Z',
+    user_id: 'user-004',
+    profiles: {
+      id: 'user-004',
+      full_name: 'Priya Sharma',
+      role: 'student',
+      program: 'BBA',
+      specialization: 'Digital Marketing',
+      year: '1st Year',
+    },
+  },
+  {
+    id: 'proj-005',
+    title: 'Minimalist Student Workspace Design',
+    description: 'Ergonomic interaction systems and UI kits.',
+    tags: ['Design', 'UI/UX', 'Figma'],
+    visibility: 'college',
+    created_at: '2026-07-10T10:00:00.000Z',
+    user_id: 'user-005',
+    profiles: {
+      id: 'user-005',
+      full_name: 'Maya Lin',
+      role: 'student',
+      program: 'B.Des',
+      specialization: 'Interaction Design (UI/UX systems)',
+      year: '4th Year',
+    },
+  },
+];
+
+async function setup() {
+  viteServer = await createServer({
+    server: { port: 5215 },
+  });
+  await viteServer.listen();
+  const address = viteServer.httpServer.address();
+  baseUrl = `http://localhost:${address.port}`;
+  browser = await chromium.launch({ headless: true });
+}
+
+async function teardown() {
+  if (browser) await browser.close();
+  if (viteServer) await viteServer.close();
+}
+
+async function runTests() {
+  console.log('======================================================================');
+  console.log('  MENTRA PHASE 5 STEP 3, SUBCATEGORY 2 — DISCOVER PAGE SUITE');
+  console.log('======================================================================\n');
+
+  let passedTests = 0;
+  let totalTests = 0;
+
+  async function test(name, fn) {
+    totalTests++;
+    console.log(`\n[TEST ${totalTests}] ${name}`);
+    try {
+      await fn();
+      passedTests++;
+    } catch (err) {
+      console.error(`  ❌ ERROR in test: ${err.message}`);
+      throw err;
+    }
+  }
+
+  const storageKey = 'sb-jqiqbiqybqnpmibceath-auth-token';
+  const testStudentId = '00000000-0000-0000-0000-000000000001';
+  const defaultSession = makeMockSession(testStudentId, 'alex@mentra.edu', {
+    full_name: 'Alex Rivera',
+    role: 'student',
+  });
+
+  const studentProfile = {
+    id: testStudentId,
+    full_name: 'Alex Rivera',
+    program: 'B.Tech',
+    specialization: 'Cyber Security',
+    year: '3rd Year',
+    role: 'student',
+    is_verified: true,
+    created_at: '2026-09-01T00:00:00.000Z',
+  };
+
+  let simulateNetworkError = false;
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  // Route interception for Supabase Auth & REST boundary
+  await page.route('**/auth/v1/user*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(defaultSession.user),
+    });
+  });
+
+  await page.route('**/auth/v1/session*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(defaultSession),
+    });
+  });
+
+  await page.route('**/rest/v1/projects*', async (route) => {
+    if (simulateNetworkError) {
+      await route.fulfill({
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'Simulated collegiate network failure for projects' }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mockProjects),
+    });
+  });
+
+  await page.route('**/rest/v1/profiles*', async (route) => {
+    const url = route.request().url();
+    // Profile fetch for current user session in AuthContext
+    if (url.includes(`id=eq.${testStudentId}`)) {
+      await route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'Content-Range': '0-0/1' },
+        body: JSON.stringify([studentProfile]),
+      });
+      return;
+    }
+
+    if (simulateNetworkError) {
+      await route.fulfill({
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'Simulated collegiate network failure for profiles' }),
+      });
+      return;
+    }
+
+    // Directory fetch for discover
+    await route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mockProfiles),
+    });
+  });
+
+  // --- 1. AUTHENTICATED ROUTE PROTECTION ---
+
+  await test('1: Unauthenticated access to /discover redirects to /login', async () => {
+    const unauthedContext = await browser.newContext();
+    const unauthedPage = await unauthedContext.newPage();
+
+    await unauthedPage.goto(`${baseUrl}/discover`, { waitUntil: 'networkidle' });
+    const currentUrl = unauthedPage.url();
+
+    runAssertion('Redirects to /login when unauthenticated', currentUrl.includes('/login'));
+    await unauthedContext.close();
+  });
+
+  await test('2: Authenticated user accesses /discover cleanly', async () => {
+    await page.addInitScript(({ key, session }) => {
+      localStorage.setItem(key, JSON.stringify(session));
+    }, { key: storageKey, session: defaultSession });
+
+    await page.goto(`${baseUrl}/discover`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('h1:has-text("Discover")', { timeout: 5000 });
+
+    const currentUrl = page.url();
+    runAssertion('Maintains /discover URL for authenticated user', currentUrl.endsWith('/discover'));
+    runAssertion('Renders Discover heading', (await page.locator('h1:has-text("Discover")').count()) === 1);
+  });
+
+  // --- 2. LOADING STATE & RETRY HANDLING ---
+
+  await test('3: Network error displays accessible error banner with working Retry', async () => {
+    simulateNetworkError = true;
+
+    // Reload page with simulated failure
+    await page.reload({ waitUntil: 'networkidle' });
+    const errorBanner = page.locator('#discover-error-message');
+    await errorBanner.waitFor({ state: 'visible', timeout: 5000 });
+
+    runAssertion('Error alert banner is visible', await errorBanner.isVisible());
+    runAssertion('Retry button is present', (await page.locator('#discover-retry-btn').count()) === 1);
+
+    // Disable network failure and click retry
+    simulateNetworkError = false;
+    await page.click('#discover-retry-btn');
+
+    // Counts summary should become visible
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
+    runAssertion('Error banner detached after successful retry', (await errorBanner.count()) === 0);
+    runAssertion('Results summary rendered after retry', (await page.locator('#discover-results-summary').count()) === 1);
+  });
+
+  // --- 3. OPTIONS POPULATION ---
+
+  await test('4: Program options match CANONICAL_PROGRAMS exactly', async () => {
+    const programSelect = page.locator('#discover-program-select');
+    const options = await programSelect.locator('option').allInnerTexts();
+
+    runAssertion('Includes All Programs placeholder', options[0] === 'All Programs');
+    const actualPrograms = options.slice(1);
+    runAssertion('Program count matches 4 canonical programs', actualPrograms.length === CANONICAL_PROGRAMS.length);
+    for (const prog of CANONICAL_PROGRAMS) {
+      runAssertion(`Contains canonical program ${prog}`, actualPrograms.includes(prog));
+    }
+  });
+
+  await test('5: Specialization options without program show all canonical specializations', async () => {
+    const specSelect = page.locator('#discover-specialization-select');
+    const options = await specSelect.locator('option').allInnerTexts();
+
+    runAssertion('Includes All Specializations placeholder', options[0] === 'All Specializations');
+    const actualSpecs = options.slice(1);
+    const allCanonical = Array.from(new Set(Object.values(PROGRAM_SPECIALIZATIONS).flat()));
+
+    runAssertion('Total unselected specializations count matches roadmap', actualSpecs.length === allCanonical.length);
+    runAssertion('Contains Cyber Security', actualSpecs.includes('Cyber Security'));
+    runAssertion('Contains Python Full Stack', actualSpecs.includes('Python Full Stack'));
+    runAssertion('Contains Digital Marketing', actualSpecs.includes('Digital Marketing'));
+    runAssertion('Contains Interaction Design (UI/UX systems)', actualSpecs.includes('Interaction Design (UI/UX systems)'));
+  });
+
+  await test('6: Selecting a Program scopes Specialization dropdown to canonical options for that program', async () => {
+    const programSelect = page.locator('#discover-program-select');
+    const specSelect = page.locator('#discover-specialization-select');
+
+    // Select B.Tech
+    await programSelect.selectOption('B.Tech');
+    const btechOptions = (await specSelect.locator('option').allInnerTexts()).slice(1);
+
+    runAssertion('B.Tech specializations count is 6', btechOptions.length === 6);
+    runAssertion('B.Tech includes Cyber Security', btechOptions.includes('Cyber Security'));
+    runAssertion('B.Tech includes Blockchain', btechOptions.includes('Blockchain'));
+    runAssertion('B.Tech strictly excludes Digital Marketing (BBA)', !btechOptions.includes('Digital Marketing'));
+    runAssertion('B.Tech strictly excludes Film Making (BBA)', !btechOptions.includes('Film Making'));
+
+    // Select BBA
+    await programSelect.selectOption('BBA');
+    const bbaOptions = (await specSelect.locator('option').allInnerTexts()).slice(1);
+
+    runAssertion('BBA specializations count is 5', bbaOptions.length === 5);
+    runAssertion('BBA includes Digital Marketing', bbaOptions.includes('Digital Marketing'));
+    runAssertion('BBA strictly excludes Cyber Security', !bbaOptions.includes('Cyber Security'));
+
+    // Reset program to all
+    await programSelect.selectOption('');
+  });
+
+  await test('7: Tag options are populated from availableTags of loaded projects', async () => {
+    const tagSelect = page.locator('#discover-tag-select');
+    const options = await tagSelect.locator('option').allInnerTexts();
+
+    runAssertion('Includes All Tags placeholder', options[0] === 'All Tags');
+    const actualTags = options.slice(1);
+    runAssertion('Tags list is populated', actualTags.length > 0);
+    runAssertion('Contains Blockchain tag', actualTags.includes('Blockchain'));
+    runAssertion('Contains Python tag', actualTags.includes('Python'));
+    runAssertion('Contains Rust tag', actualTags.includes('Rust'));
+    runAssertion('Contains UI/UX tag', actualTags.includes('UI/UX'));
+  });
+
+  await test('8: Year options are populated from loaded People and project-owner data, including Graduate', async () => {
+    const yearSelect = page.locator('#discover-year-select');
+    const options = await yearSelect.locator('option').allInnerTexts();
+
+    runAssertion('Includes All Years placeholder', options[0] === 'All Years');
+    const actualYears = options.slice(1);
+    runAssertion('Contains 1st Year', actualYears.includes('1st Year'));
+    runAssertion('Contains 2nd Year', actualYears.includes('2nd Year'));
+    runAssertion('Contains 3rd Year', actualYears.includes('3rd Year'));
+    runAssertion('Contains 4th Year', actualYears.includes('4th Year'));
+    runAssertion('Contains Graduate without inventing or discarding values', actualYears.includes('Graduate'));
+  });
+
+  // --- 4. PROGRAM & SPECIALIZATION DEPENDENT RESET ---
+
+  await test('9: Switching Program preserves Specialization if valid, clears it if invalid', async () => {
+    const programSelect = page.locator('#discover-program-select');
+    const specSelect = page.locator('#discover-specialization-select');
+
+    // 1. Select B.Tech, then select Cyber Security (valid for both B.Tech and BCA)
+    await programSelect.selectOption('B.Tech');
+    await specSelect.selectOption('Cyber Security');
+    runAssertion('Specialization selected as Cyber Security', (await specSelect.inputValue()) === 'Cyber Security');
+
+    // 2. Switch to BCA: Cyber Security is valid for BCA, so it must be PRESERVED
+    await programSelect.selectOption('BCA');
+    runAssertion('Specialization preserved as Cyber Security when switching to BCA', (await specSelect.inputValue()) === 'Cyber Security');
+
+    // 3. Under BCA, switch specialization to Python Full Stack (valid in BCA, invalid in B.Tech)
+    await specSelect.selectOption('Python Full Stack');
+    runAssertion('Specialization selected as Python Full Stack', (await specSelect.inputValue()) === 'Python Full Stack');
+
+    // 4. Switch program back to B.Tech: Python Full Stack is INVALID for B.Tech, so it must be CLEARED
+    await programSelect.selectOption('B.Tech');
+    runAssertion('Specialization cleared when switching to program where it is invalid', (await specSelect.inputValue()) === '');
+
+    // Reset back to empty
+    await programSelect.selectOption('');
+  });
+
+  // --- 5. MATCHING COUNTS & IN-MEMORY FILTERING ---
+
+  await test('10: Initial matching counts show full dataset totals', async () => {
+    const peopleCount = await page.locator('#discover-people-count').innerText();
+    const projCount = await page.locator('#discover-projects-count').innerText();
+
+    runAssertion('Initial matching people count is 6', peopleCount === '6');
+    runAssertion('Initial matching projects count is 5', projCount === '5');
+  });
+
+  await test('11: Plain-text search updates people and project counts (project creator name excluded)', async () => {
+    const searchInput = page.locator('#discover-search-input');
+
+    // Search by name 'Alex' -> matches 1 person ('Alex Rivera'), 0 projects (creator name Alex not in project title/tags)
+    await searchInput.fill('Alex');
+    runAssertion('People count matches Alex Rivera', (await page.locator('#discover-people-count').innerText()) === '1');
+    runAssertion('Project count is 0 because creator name is not searched in projects', (await page.locator('#discover-projects-count').innerText()) === '0');
+
+    // Search by tag 'Rust' -> matches 0 people, 1 project ('Decentralized Consensus Protocol')
+    await searchInput.fill('Rust');
+    runAssertion('People count is 0 for Rust', (await page.locator('#discover-people-count').innerText()) === '0');
+    runAssertion('Project count is 1 for Rust tag', (await page.locator('#discover-projects-count').innerText()) === '1');
+
+    // Clear search
+    await searchInput.fill('');
+    runAssertion('People count restored to 6', (await page.locator('#discover-people-count').innerText()) === '6');
+    runAssertion('Project count restored to 5', (await page.locator('#discover-projects-count').innerText()) === '5');
+  });
+
+  await test('12: Tag filter updates project count only and preserves people count', async () => {
+    const tagSelect = page.locator('#discover-tag-select');
+
+    await tagSelect.selectOption('Python');
+    runAssertion('Project count matches Collegiate Mentorship Portal (has Python tag)', (await page.locator('#discover-projects-count').innerText()) === '1');
+    runAssertion('People count is unaffected by Tag filter (stays 6)', (await page.locator('#discover-people-count').innerText()) === '6');
+
+    await tagSelect.selectOption('');
+  });
+
+  await test('13: Academic filters (Program, Specialization, Year) update matching counts for people and project owners', async () => {
+    const programSelect = page.locator('#discover-program-select');
+    const specSelect = page.locator('#discover-specialization-select');
+    const yearSelect = page.locator('#discover-year-select');
+
+    // Filter by Program B.Tech (2 people: Alex Rivera, Dr. Evelyn Reed; 2 projects: proj-001, proj-003)
+    await programSelect.selectOption('B.Tech');
+    runAssertion('B.Tech people count is 2', (await page.locator('#discover-people-count').innerText()) === '2');
+    runAssertion('B.Tech projects count is 2', (await page.locator('#discover-projects-count').innerText()) === '2');
+
+    // Filter by Specialization 'Cyber Security' under B.Tech (1 person: Alex Rivera; 1 project: proj-001)
+    await specSelect.selectOption('Cyber Security');
+    runAssertion('Cyber Security people count is 1', (await page.locator('#discover-people-count').innerText()) === '1');
+    runAssertion('Cyber Security projects count is 1', (await page.locator('#discover-projects-count').innerText()) === '1');
+
+    // Filter by Year '3rd Year'
+    await yearSelect.selectOption('3rd Year');
+    runAssertion('3rd Year Cyber Security B.Tech people count is 1', (await page.locator('#discover-people-count').innerText()) === '1');
+    runAssertion('3rd Year Cyber Security B.Tech projects count is 1', (await page.locator('#discover-projects-count').innerText()) === '1');
+
+    // Filter by Year '4th Year' (should produce 0 matches with B.Tech Cyber Security)
+    await yearSelect.selectOption('4th Year');
+    runAssertion('Non-matching year produces 0 people', (await page.locator('#discover-people-count').innerText()) === '0');
+    runAssertion('Non-matching year produces 0 projects', (await page.locator('#discover-projects-count').innerText()) === '0');
+
+    // Clear filters via button
+    await page.click('#discover-clear-filters-btn');
+  });
+
+  // --- 6. CLEAR FILTERS CONTROL ---
+
+  await test('14: Clear Filters button resets all 5 controls and restores counts', async () => {
+    const searchInput = page.locator('#discover-search-input');
+    const tagSelect = page.locator('#discover-tag-select');
+    const programSelect = page.locator('#discover-program-select');
+    const specSelect = page.locator('#discover-specialization-select');
+    const yearSelect = page.locator('#discover-year-select');
+    const clearBtn = page.locator('#discover-clear-filters-btn');
+
+    // Set all controls to active values
+    await searchInput.fill('Protocol');
+    await tagSelect.selectOption('Blockchain');
+    await programSelect.selectOption('B.Tech');
+    await specSelect.selectOption('Blockchain');
+    await yearSelect.selectOption('3rd Year');
+
+    runAssertion('Clear Filters button is enabled when filters are active', await clearBtn.isEnabled());
+
+    // Click Clear Filters
+    await clearBtn.click();
+
+    runAssertion('Search input reset to empty', (await searchInput.inputValue()) === '');
+    runAssertion('Tag select reset to empty', (await tagSelect.inputValue()) === '');
+    runAssertion('Program select reset to empty', (await programSelect.inputValue()) === '');
+    runAssertion('Specialization select reset to empty', (await specSelect.inputValue()) === '');
+    runAssertion('Year select reset to empty', (await yearSelect.inputValue()) === '');
+
+    runAssertion('People count restored to 6', (await page.locator('#discover-people-count').innerText()) === '6');
+    runAssertion('Projects count restored to 5', (await page.locator('#discover-projects-count').innerText()) === '5');
+  });
+
+  // --- 7. PRE-CARD & NAVIGATION BOUNDARIES ---
+
+  await test('15: Does not render individual People or Project cards in this subcategory', async () => {
+    // Assert no cards or list items for people or projects are rendered
+    runAssertion('No profile cards rendered', (await page.locator('.profile-card, .person-card, [data-testid="person-card"]').count()) === 0);
+    runAssertion('No project cards rendered', (await page.locator('.project-card, [data-testid="project-card"]').count()) === 0);
+  });
+
+  await test('16: Navbar does not expose links to /discover in this subcategory', async () => {
+    const navLinks = page.locator('nav a[href="/discover"], .navbar a[href="/discover"]');
+    runAssertion('Navbar does not contain link to /discover', (await navLinks.count()) === 0);
+  });
+
+  console.log('\n======================================================================');
+  console.log(`  ALL ${passedTests}/${totalTests} TESTS PASSED CLEANLY!`);
+  console.log('======================================================================\n');
+}
+
+(async () => {
+  try {
+    await setup();
+    await runTests();
+  } catch (err) {
+    console.error('Discover page verification failed:', err);
+    process.exitCode = 1;
+  } finally {
+    await teardown();
+  }
+})();
