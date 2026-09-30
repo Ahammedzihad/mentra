@@ -1,7 +1,15 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { isValidProgram, isValidSpecialization } from '../lib/academicPrograms';
 
 const AuthContext = createContext(null);
+
+const CANONICAL_YEARS = Object.freeze([
+  '1st Year',
+  '2nd Year',
+  '3rd Year',
+  '4th Year',
+]);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -18,7 +26,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, full_name, department, role, is_verified, created_at')
+        .select('id, full_name, department, course, program, specialization, year, batch, bio, role, is_verified, created_at')
         .eq('id', userId)
         .maybeSingle();
 
@@ -35,11 +43,63 @@ export const AuthProvider = ({ children }) => {
         const { data: userData } = await supabase.auth.getUser();
         const meta = userData?.user?.user_metadata || {};
         const fallbackRole = meta.role === 'mentor' ? 'mentor' : meta.role === 'admin' ? 'admin' : 'student';
+        const isStudent = fallbackRole === 'student';
+
+        // 1. Program resolution:
+        // Every program value written by this fallback must be either a canonical program or null.
+        // Choose program only from metadata values that independently pass canonical program validation.
+        // Preference order: meta.program -> meta.course -> meta.department -> null.
+        // Never copy arbitrary or non-canonical text into program.
+        const rawProgram = typeof meta.program === 'string' ? meta.program.trim() : null;
+        const rawCourse = typeof meta.course === 'string' ? meta.course.trim() : null;
+        const rawDept = typeof meta.department === 'string' ? meta.department.trim() : null;
+
+        const candidateProgram =
+          (rawProgram && isValidProgram(rawProgram) ? rawProgram : null) ||
+          (rawCourse && isValidProgram(rawCourse) ? rawCourse : null) ||
+          (rawDept && isValidProgram(rawDept) ? rawDept : null) ||
+          null;
+
+        // 2. Specialization resolution:
+        // If program is canonical and specialization is valid for that program, keep it; otherwise null.
+        const rawSpec = typeof meta.specialization === 'string' ? meta.specialization.trim() : null;
+        const fallbackSpecialization =
+          candidateProgram && rawSpec && isValidSpecialization(candidateProgram, rawSpec)
+            ? rawSpec
+            : null;
+
+        // 3. Role-specific department and course legacy compatibility:
+        // - For students with a valid canonical program: synchronize department and course with that program.
+        // - For students with missing/invalid program: keep safe legacy fallback ('B.Tech') while program is null.
+        // - For mentors/admins: preserve original metadata department (e.g. faculty dept) and course; do NOT overwrite with program.
+        let fallbackDepartment = null;
+        let fallbackCourse = null;
+
+        if (isStudent) {
+          if (candidateProgram) {
+            fallbackDepartment = candidateProgram;
+            fallbackCourse = candidateProgram;
+          } else {
+            fallbackDepartment = rawDept || 'B.Tech';
+            fallbackCourse = rawCourse || fallbackDepartment;
+          }
+        } else {
+          // Mentors and admins: preserve existing department (e.g. faculty dept) and course metadata
+          fallbackDepartment = rawDept || null;
+          fallbackCourse = rawCourse || null;
+        }
+
         const fallbackProfile = {
           id: userId,
-          full_name: meta.full_name || 'Community Member',
+          full_name: (typeof meta.full_name === 'string' && meta.full_name.trim()) || 'Community Member',
           role: fallbackRole,
-          department: meta.department || 'B.Tech',
+          department: fallbackDepartment,
+          course: fallbackCourse,
+          program: candidateProgram,
+          specialization: fallbackSpecialization,
+          year: (typeof meta.year === 'string' && meta.year.trim()) || null,
+          batch: (typeof meta.batch === 'string' && meta.batch.trim()) || null,
+          bio: (typeof meta.bio === 'string' && meta.bio.trim()) || null,
           is_verified: false,
         };
 
@@ -48,14 +108,14 @@ export const AuthProvider = ({ children }) => {
           const { data: inserted, error: insErr } = await supabase
             .from('profiles')
             .upsert([fallbackProfile], { onConflict: 'id' })
-            .select('id, full_name, department, role, is_verified, created_at')
+            .select('id, full_name, department, course, program, specialization, year, batch, bio, role, is_verified, created_at')
             .maybeSingle();
 
           if (!insErr && inserted) {
             setProfile(inserted);
             return inserted;
           }
-        } catch (e) {
+        } catch {
           // Fallback to local profile object if RLS prevents upsert
         }
 
@@ -218,6 +278,114 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  /**
+   * Updates the signed-in user's profile with an enforced editable-field allowlist.
+   *
+   * Security & Integrity Invariants:
+   * 1. Target ID is strictly derived from user.id (authenticated session); never accepts target ID from caller.
+   * 2. Rejects operation immediately if no authenticated user is present.
+   * 3. Strict editable-field allowlist: only full_name, program, specialization, year, and bio are accepted.
+   *    Protected or arbitrary fields (role, is_verified, id, email, created_at, etc.) are stripped.
+   * 4. Academic validation: enforces non-empty full name, canonical program, and valid specialization pair.
+   * 5. Legacy compatibility: synchronizes department and course from validated program.
+   * 6. Updates AuthContext local state from the returned database row, preserving role and verification status.
+   *
+   * @param {Object} updates
+   * @param {string} [updates.fullName]
+   * @param {string} [updates.full_name]
+   * @param {string} [updates.program]
+   * @param {string|null} [updates.specialization]
+   * @param {string|null} [updates.year]
+   * @param {string|null} [updates.bio]
+   * @returns {Promise<{ data: Object, error: null }>}
+   */
+  const updateProfile = async (updates = {}) => {
+    if (!isSupabaseConfigured) {
+      throw new Error('Supabase credentials are not configured in .env yet.');
+    }
+
+    if (!user?.id) {
+      throw new Error('Unauthorized: Authentication required to update profile.');
+    }
+
+    // 1. Full name validation (required, non-empty after trimming)
+    const rawFullName = updates.fullName !== undefined ? updates.fullName : updates.full_name;
+    const resolvedFullName = rawFullName !== undefined ? rawFullName : profile?.full_name;
+    const trimmedFullName = typeof resolvedFullName === 'string' ? resolvedFullName.trim() : '';
+
+    if (!trimmedFullName) {
+      throw new Error('Please provide your full legal or academic name.');
+    }
+
+    // 2. Program validation (required, must be one of the canonical programs)
+    const rawProgram = updates.program !== undefined ? updates.program : profile?.program;
+    if (!rawProgram || !isValidProgram(rawProgram)) {
+      throw new Error('Please select a valid canonical academic program.');
+    }
+
+    // 3. Specialization validation (optional; if non-empty, must be valid for program)
+    const rawSpec = updates.specialization !== undefined ? updates.specialization : profile?.specialization;
+    const trimmedSpec = typeof rawSpec === 'string' ? rawSpec.trim() : null;
+    const normalizedSpec = trimmedSpec || null;
+
+    if (normalizedSpec && !isValidSpecialization(rawProgram, normalizedSpec)) {
+      throw new Error('The selected specialization is not valid for your chosen program.');
+    }
+
+    // 4. Academic year handling (optional; if non-empty, trimmed string; blank saved as null)
+    const rawYear = updates.year !== undefined ? updates.year : profile?.year;
+    const trimmedYear = typeof rawYear === 'string' ? rawYear.trim() : null;
+    const normalizedYear = trimmedYear || null;
+
+    if (updates.year !== undefined && normalizedYear && !CANONICAL_YEARS.includes(normalizedYear)) {
+      throw new Error('Please select a valid academic year level.');
+    }
+
+    // 5. Bio handling (optional; if non-empty, trimmed string; blank saved as null)
+    const rawBio = updates.bio !== undefined ? updates.bio : profile?.bio;
+    const trimmedBio = typeof rawBio === 'string' ? rawBio.trim() : null;
+    const normalizedBio = trimmedBio || null;
+
+    // 6. Construct strictly allowlisted database payload
+    // Role-aware legacy compatibility synchronization:
+    // - For students: synchronize legacy department and course fields with program
+    // - For mentors and admins: preserve existing faculty/institutional department
+    const isStudent = profile?.role === 'student' || (!profile?.role && user?.user_metadata?.role !== 'mentor');
+
+    const payload = {
+      full_name: trimmedFullName,
+      program: rawProgram,
+      specialization: normalizedSpec,
+      year: normalizedYear,
+      bio: normalizedBio,
+    };
+
+    if (isStudent) {
+      payload.department = rawProgram;
+      payload.course = rawProgram;
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(payload)
+      .eq('id', user.id)
+      .select('id, full_name, department, course, program, specialization, year, batch, bio, role, is_verified, created_at')
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error updating profile in Supabase:', error.message);
+      throw error;
+    }
+
+    if (!data) {
+      throw new Error('Profile update failed: No matching profile record found.');
+    }
+
+    // Reflect saved database row into local AuthContext state
+    setProfile(data);
+    return { data, error: null };
+  };
+
   // Reset Password for Email: Sends recovery email with dynamic origin redirect
   const resetPasswordForEmail = async (email) => {
     if (!isSupabaseConfigured) {
@@ -263,6 +431,7 @@ export const AuthProvider = ({ children }) => {
         signIn,
         signOut,
         refreshProfile,
+        updateProfile,
         resetPasswordForEmail,
         updatePassword,
         isPasswordRecovery,
