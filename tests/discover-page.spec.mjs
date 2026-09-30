@@ -1,36 +1,23 @@
 /**
- * Mentra Phase 5 Step 3, Subcategory 2 — Discover Page Controls & Route Verification Suite
+ * Mentra Phase 5 Step 3, Subcategory 3 — Discover Page Results, Controls & Robustness Suite
  *
  * Tests:
- * 1. Authenticated route protection:
- *    - Unauthenticated visit to /discover redirects to /login
- *    - Authenticated user accesses /discover cleanly
+ * 1. Authenticated route protection (/discover redirects when unauthenticated, opens cleanly when authenticated)
  * 2. Page shell and accessible loading state
- * 3. Error handling & retry:
- *    - Query failure renders accessible error banner
- *    - Clicking Retry re-attempts fetch and populates directory on success
- * 4. Control population:
- *    - Program dropdown populated from CANONICAL_PROGRAMS
- *    - Specialization dropdown populated with canonical mapping (all when program empty, scoped when selected)
- *    - Tag dropdown populated from service's availableTags
- *    - Year dropdown populated dynamically from loaded profile/owner records (including Graduate)
- * 5. Program & Specialization dependency and smart reset:
- *    - Switching program preserves specialization if valid for new program
- *    - Switching program clears specialization if invalid for new program
- * 6. Live in-memory filtering and matching counts:
- *    - Search updates people and project counts (project creator name excluded from project search)
- *    - Tag filter updates project count only (people unaffected)
- *    - Program filter scopes people and project owner profiles
- *    - Specialization filter scopes people and project owner profiles
- *    - Year filter scopes people and project owner profiles
- *    - Multi-criteria combination with AND logic
- * 7. Clear Filters control:
- *    - Resets all 5 controls (search, tag, program, specialization, year)
- *    - Restores matching counts to total loaded records
- * 8. Pre-card boundaries:
- *    - Confirms no People cards or Project cards are rendered in this subcategory
- * 9. Navigation boundaries:
- *    - Confirms /discover was not added to the desktop or mobile navbar
+ * 3. Error handling & retry (error alert banner with working retry button)
+ * 4. Control population (Programs from canonical list, Specializations, Tags, collegiate progression Years)
+ * 5. Program & Specialization dependency and smart reset
+ * 6. Live in-memory filtering and matching counts summary
+ * 7. Clear Filters control
+ * 8. People result cards rendering (role, program, specialization, year; excludes bio/email)
+ * 9. Project result cards rendering (title, description, tags, and owner context)
+ * 10. Per-section accessible empty states (distinguishes no matches from no directory records)
+ * 11. Empty states hidden during loading and error states
+ * 12. Navigation boundary check (confirms /discover is not exposed on navbar in this subcategory)
+ * 13. Safe owner normalization: projects with empty array profiles (`profiles: []`) render without crashing and omit owner section
+ * 14. Missing owner normalization: projects with absent or null owner relations render without crashing and omit owner section
+ * 15. Whitespace-only optional values omission for People cards, Project descriptions/tags, and owner details
+ * 16. Empty source collections: shows "no records available" empty states separately for People and Projects
  */
 
 import { chromium } from 'playwright';
@@ -284,6 +271,8 @@ async function runTests() {
   };
 
   let simulateNetworkError = false;
+  let customProjectsResponse = null;
+  let customProfilesResponse = null;
 
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -317,7 +306,7 @@ async function runTests() {
     await route.fulfill({
       status: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(mockProjects),
+      body: JSON.stringify(customProjectsResponse !== null ? customProjectsResponse : mockProjects),
     });
   });
 
@@ -346,7 +335,7 @@ async function runTests() {
     await route.fulfill({
       status: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(mockProfiles),
+      body: JSON.stringify(customProfilesResponse !== null ? customProfilesResponse : mockProfiles),
     });
   });
 
@@ -607,17 +596,321 @@ async function runTests() {
     runAssertion('Projects count restored to 5', (await page.locator('#discover-projects-count').innerText()) === '5');
   });
 
-  // --- 7. PRE-CARD & NAVIGATION BOUNDARIES ---
+  // --- 7. PEOPLE & PROJECT RESULT CARDS & EMPTY STATES ---
 
-  await test('15: Does not render individual People or Project cards in this subcategory', async () => {
-    // Assert no cards or list items for people or projects are rendered
-    runAssertion('No profile cards rendered', (await page.locator('.profile-card, .person-card, [data-testid="person-card"]').count()) === 0);
-    runAssertion('No project cards rendered', (await page.locator('.project-card, [data-testid="project-card"]').count()) === 0);
+  await test('15: People cards render correct content and gracefully omit missing optional values', async () => {
+    const peopleCards = page.locator('[data-testid="discover-person-card"]');
+    runAssertion('Renders 6 People cards initially', (await peopleCards.count()) === 6);
+
+    // Verify Alex Rivera (complete student profile)
+    const alexCard = peopleCards.filter({ hasText: 'Alex Rivera' });
+    runAssertion('Alex Rivera card exists', (await alexCard.count()) === 1);
+    runAssertion('Alex card shows role student', (await alexCard.locator('.discover-person-role').innerText()).toLowerCase().includes('student'));
+    runAssertion('Alex card shows program B.Tech', (await alexCard.locator('.discover-person-program').textContent()).includes('B.Tech'));
+    runAssertion('Alex card shows specialization Cyber Security', (await alexCard.locator('.discover-person-specialization').textContent()).includes('Cyber Security'));
+    runAssertion('Alex card shows year 3rd Year', (await alexCard.locator('.discover-person-year').textContent()).includes('3rd Year'));
+
+    // Verify Dr. Evelyn Reed (mentor with year: null)
+    const evelynCard = peopleCards.filter({ hasText: 'Dr. Evelyn Reed' });
+    runAssertion('Dr. Evelyn Reed card exists', (await evelynCard.count()) === 1);
+    runAssertion('Evelyn card shows role mentor', (await evelynCard.locator('.discover-person-role').innerText()).toLowerCase().includes('mentor'));
+    runAssertion('Evelyn card shows program B.Tech', (await evelynCard.locator('.discover-person-program').textContent()).includes('B.Tech'));
+    runAssertion('Evelyn card shows specialization AI & Machine Learning', (await evelynCard.locator('.discover-person-specialization').textContent()).includes('AI & Machine Learning'));
+    runAssertion('Evelyn card omits year badge gracefully when null', (await evelynCard.locator('.discover-person-year').count()) === 0);
+
+    // Verify no email or bio rendered on any people card
+    const cardTexts = await peopleCards.allInnerTexts();
+    for (const text of cardTexts) {
+      runAssertion('Card does not display email address', !text.includes('@mentra.edu'));
+      runAssertion('Card does not display bio', !text.includes('Faculty mentor in machine intelligence'));
+    }
   });
 
-  await test('16: Navbar does not expose links to /discover in this subcategory', async () => {
+  await test('16: Project cards render title, description, tags, and owner details gracefully', async () => {
+    const projectCards = page.locator('[data-testid="discover-project-card"]');
+    runAssertion('Renders 5 Project cards initially', (await projectCards.count()) === 5);
+
+    // Verify Decentralized Consensus Protocol
+    const consensusCard = projectCards.filter({ hasText: 'Decentralized Consensus Protocol' });
+    runAssertion('Consensus Protocol card exists', (await consensusCard.count()) === 1);
+    runAssertion('Shows project description', (await consensusCard.locator('.discover-project-description').innerText()).includes('study on distributed ledgers'));
+
+    // Tags
+    const tags = await consensusCard.locator('.discover-tag-chip').allInnerTexts();
+    runAssertion('Shows Blockchain tag', tags.includes('Blockchain'));
+    runAssertion('Shows Cyber Security tag', tags.includes('Cyber Security'));
+    runAssertion('Shows Rust tag', tags.includes('Rust'));
+
+    // Owner details
+    runAssertion('Shows owner name Alex Rivera', (await consensusCard.locator('.discover-owner-name').innerText()).includes('Alex Rivera'));
+    runAssertion('Shows owner role', (await consensusCard.locator('.discover-owner-role').innerText()).toLowerCase().includes('student'));
+    runAssertion('Shows owner program B.Tech', (await consensusCard.locator('.discover-owner-program').textContent()).includes('B.Tech'));
+    runAssertion('Shows owner specialization', (await consensusCard.locator('.discover-owner-specialization').textContent()).includes('Cyber Security'));
+    runAssertion('Shows owner year', (await consensusCard.locator('.discover-owner-year').textContent()).includes('3rd Year'));
+
+    // Verify project with mentor owner having year: null (Neural Vision Classifier)
+    const neuralCard = projectCards.filter({ hasText: 'Neural Vision Classifier' });
+    runAssertion('Neural Vision Classifier card exists', (await neuralCard.count()) === 1);
+    runAssertion('Shows owner Dr. Evelyn Reed', (await neuralCard.locator('.discover-owner-name').innerText()).includes('Dr. Evelyn Reed'));
+    runAssertion('Neural card omits owner year badge gracefully when null', (await neuralCard.locator('.discover-owner-year').count()) === 0);
+  });
+
+  await test('17: Per-section empty states distinguish no search matches and render independently', async () => {
+    const searchInput = page.locator('#discover-search-input');
+
+    // 1. Search 'Rust' matches 1 project (via tag) and 0 people
+    await searchInput.fill('Rust');
+    const peopleEmpty = page.locator('#discover-people-empty-state');
+    const projEmpty = page.locator('#discover-projects-empty-state');
+
+    runAssertion('People empty state is displayed when 0 people match', await peopleEmpty.isVisible());
+    runAssertion('People empty state heading indicates no matching people', (await peopleEmpty.innerText()).includes('No Matching People Found'));
+    runAssertion('Projects empty state is NOT displayed because 1 project matched', (await projEmpty.count()) === 0);
+    runAssertion('Projects grid displays 1 matching project', (await page.locator('[data-testid="discover-project-card"]').count()) === 1);
+
+    // 2. Search 'Alex' matches 1 person and 0 projects
+    await searchInput.fill('Alex');
+    runAssertion('Projects empty state is displayed when 0 projects match', await projEmpty.isVisible());
+    runAssertion('Projects empty state heading indicates no matching projects', (await projEmpty.innerText()).includes('No Matching Projects Found'));
+    runAssertion('People empty state is NOT displayed because 1 person matched', (await peopleEmpty.count()) === 0);
+    runAssertion('People grid displays 1 matching person', (await page.locator('[data-testid="discover-person-card"]').count()) === 1);
+
+    // 3. Search 'NonExistentZebra' matches 0 people and 0 projects
+    await searchInput.fill('NonExistentZebra');
+    runAssertion('Both People and Projects empty states are displayed', (await peopleEmpty.isVisible()) && (await projEmpty.isVisible()));
+
+    // Clear search
+    await page.click('#discover-clear-filters-btn');
+    runAssertion('Empty states removed when filters cleared', (await peopleEmpty.count()) === 0 && (await projEmpty.count()) === 0);
+  });
+
+  await test('18: Empty states are never shown while loading or when an error is displayed', async () => {
+    // Verify during error state
+    simulateNetworkError = true;
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#discover-error-message').waitFor({ state: 'visible', timeout: 5000 });
+
+    runAssertion('People empty state not shown on error', (await page.locator('#discover-people-empty-state').count()) === 0);
+    runAssertion('Projects empty state not shown on error', (await page.locator('#discover-projects-empty-state').count()) === 0);
+    runAssertion('No cards shown on error', (await page.locator('[data-testid="discover-person-card"]').count()) === 0);
+
+    // Recover
+    simulateNetworkError = false;
+    await page.click('#discover-retry-btn');
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
+  });
+
+  await test('19: Navbar does not expose links to /discover in this subcategory', async () => {
     const navLinks = page.locator('nav a[href="/discover"], .navbar a[href="/discover"]');
     runAssertion('Navbar does not contain link to /discover', (await navLinks.count()) === 0);
+  });
+
+  await test('20: Project with profiles: [] renders without crashing, remains in results, and has no owner section', async () => {
+    const emptyArrayOwnerProject = {
+      id: 'proj-empty-array-owner',
+      title: 'Autonomous Drone Navigation',
+      description: 'Pathfinding algorithms for aerial robotics.',
+      tags: ['Robotics', 'Python'],
+      visibility: 'college',
+      created_at: '2026-09-29T10:00:00.000Z',
+      user_id: 'user-099',
+      profiles: [],
+    };
+
+    customProjectsResponse = [emptyArrayOwnerProject];
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
+
+    const projectCards = page.locator('[data-testid="discover-project-card"]');
+    runAssertion('Project with empty array profiles remains in Project results', (await projectCards.count()) === 1);
+
+    const card = projectCards.first();
+    runAssertion('Card renders project title', (await card.locator('.discover-project-title').innerText()).includes('Autonomous Drone Navigation'));
+    runAssertion('Card renders project description', (await card.locator('.discover-project-description').innerText()).includes('Pathfinding algorithms'));
+    runAssertion('Card renders project tags', (await card.locator('.discover-tag-chip').count()) === 2);
+    runAssertion('Card completely omits owner section when profiles is empty array', (await card.locator('.discover-project-owner').count()) === 0);
+    runAssertion('Card omits owner name element', (await card.locator('.discover-owner-name').count()) === 0);
+
+    // Reset
+    customProjectsResponse = null;
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
+  });
+
+  await test('21: Project with no owner relation (null or absent) renders without crashing and omits owner details', async () => {
+    const noOwnerProjects = [
+      {
+        id: 'proj-null-owner',
+        title: 'Quantum Key Distribution',
+        description: 'Cryptographic simulation in Julia.',
+        tags: ['Quantum', 'Security'],
+        visibility: 'college',
+        created_at: '2026-09-29T11:00:00.000Z',
+        user_id: 'user-100',
+        profiles: null,
+      },
+      {
+        id: 'proj-absent-owner',
+        title: 'Microgrid Energy Storage',
+        description: 'Renewable power load balancing system.',
+        tags: ['Energy', 'IoT'],
+        visibility: 'college',
+        created_at: '2026-09-29T12:00:00.000Z',
+        user_id: 'user-101',
+        // profiles property completely absent
+      },
+    ];
+
+    customProjectsResponse = noOwnerProjects;
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
+
+    const projectCards = page.locator('[data-testid="discover-project-card"]');
+    runAssertion('Both projects without owner relation render in Project results', (await projectCards.count()) === 2);
+
+    for (let i = 0; i < 2; i++) {
+      const card = projectCards.nth(i);
+      runAssertion(`Card ${i + 1} has no owner section`, (await card.locator('.discover-project-owner').count()) === 0);
+      runAssertion(`Card ${i + 1} has no owner name`, (await card.locator('.discover-owner-name').count()) === 0);
+    }
+
+    // Reset
+    customProjectsResponse = null;
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
+  });
+
+  await test('22: Whitespace-only optional values are omitted for People cards, Project descriptions/tags, and owner details while nonblank values render', async () => {
+    const whitespacePeople = [
+      {
+        id: 'user-ws-1',
+        full_name: 'Jordan Lee',
+        role: '   ',
+        program: ' \t ',
+        specialization: '   ',
+        year: '   ',
+        created_at: '2026-09-29T08:00:00.000Z',
+      },
+      {
+        id: 'user-ws-2',
+        full_name: 'Samira Khan',
+        role: 'student',
+        program: '   ',
+        specialization: 'Cyber Security',
+        year: '   ',
+        created_at: '2026-09-29T09:00:00.000Z',
+      },
+    ];
+
+    const whitespaceProject = [
+      {
+        id: 'proj-ws-1',
+        title: 'Algorithmic Fairness Testing',
+        description: '   \n  \t ',
+        tags: ['Cyber Security', '   ', '', 'Rust', '   \t  '],
+        visibility: 'college',
+        created_at: '2026-09-29T10:00:00.000Z',
+        user_id: 'user-ws-3',
+        profiles: {
+          id: 'user-ws-3',
+          full_name: 'Taylor Swift',
+          role: '   ',
+          program: 'B.Tech',
+          specialization: '   ',
+          year: '2nd Year',
+        },
+      },
+    ];
+
+    customProfilesResponse = whitespacePeople;
+    customProjectsResponse = whitespaceProject;
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
+
+    // 1. People card assertions
+    const peopleCards = page.locator('[data-testid="discover-person-card"]');
+    runAssertion('Renders 2 People cards with whitespace attributes', (await peopleCards.count()) === 2);
+
+    const jordanCard = peopleCards.filter({ hasText: 'Jordan Lee' });
+    runAssertion('Jordan Lee card renders name', (await jordanCard.count()) === 1);
+    runAssertion('Jordan card omits whitespace role', (await jordanCard.locator('.discover-person-role').count()) === 0);
+    runAssertion('Jordan card omits whitespace program', (await jordanCard.locator('.discover-person-program').count()) === 0);
+    runAssertion('Jordan card omits whitespace specialization', (await jordanCard.locator('.discover-person-specialization').count()) === 0);
+    runAssertion('Jordan card omits whitespace year', (await jordanCard.locator('.discover-person-year').count()) === 0);
+
+    const samiraCard = peopleCards.filter({ hasText: 'Samira Khan' });
+    runAssertion('Samira Khan card renders name', (await samiraCard.count()) === 1);
+    runAssertion('Samira card renders nonblank role student', (await samiraCard.locator('.discover-person-role').innerText()).toLowerCase().includes('student'));
+    runAssertion('Samira card omits whitespace program', (await samiraCard.locator('.discover-person-program').count()) === 0);
+    runAssertion('Samira card renders nonblank specialization', (await samiraCard.locator('.discover-person-specialization').textContent()).includes('Cyber Security'));
+    runAssertion('Samira card omits whitespace year', (await samiraCard.locator('.discover-person-year').count()) === 0);
+
+    // 2. Project card description and tags assertions
+    const projCard = page.locator('[data-testid="discover-project-card"]').first();
+    runAssertion('Project renders nonblank title', (await projCard.locator('.discover-project-title').innerText()).includes('Algorithmic Fairness Testing'));
+    runAssertion('Project card omits whitespace-only description', (await projCard.locator('.discover-project-description').count()) === 0);
+
+    const displayedTags = await projCard.locator('.discover-tag-chip').allInnerTexts();
+    runAssertion('Omits blank tags individually and preserves nonblank tags', displayedTags.length === 2 && displayedTags.includes('Cyber Security') && displayedTags.includes('Rust'));
+
+    // 3. Project owner detail assertions
+    runAssertion('Project renders owner section for nonblank owner', (await projCard.locator('.discover-project-owner').count()) === 1);
+    runAssertion('Renders nonblank owner name Taylor Swift', (await projCard.locator('.discover-owner-name').innerText()).includes('Taylor Swift'));
+    runAssertion('Omits whitespace-only owner role', (await projCard.locator('.discover-owner-role').count()) === 0);
+    runAssertion('Renders nonblank owner program B.Tech', (await projCard.locator('.discover-owner-program').textContent()).includes('B.Tech'));
+    runAssertion('Omits whitespace-only owner specialization', (await projCard.locator('.discover-owner-specialization').count()) === 0);
+    runAssertion('Renders nonblank owner year 2nd Year', (await projCard.locator('.discover-owner-year').textContent()).includes('2nd Year'));
+
+    // Reset
+    customProfilesResponse = null;
+    customProjectsResponse = null;
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
+  });
+
+  await test('23: Empty source collections show "no records available" state separately for People and Projects', async () => {
+    // 1. Empty People source collection: rawPeople = [], rawProjects = [mockProjects[0]]
+    customProfilesResponse = [];
+    customProjectsResponse = [mockProjects[0]];
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
+
+    const peopleEmpty = page.locator('#discover-people-empty-state');
+    const projEmpty = page.locator('#discover-projects-empty-state');
+
+    runAssertion('People empty state is shown when source collection is empty', await peopleEmpty.isVisible());
+    runAssertion('People empty state heading says "No People Records Available"', (await peopleEmpty.locator('h3').innerText()).includes('No People Records Available'));
+    runAssertion('People empty state text explains directory currently has no records', (await peopleEmpty.locator('p').innerText()).includes('directory currently has no profile records available'));
+    runAssertion('Projects empty state is NOT shown because projects exist in source collection', (await projEmpty.count()) === 0);
+    runAssertion('Project card renders when projects exist', (await page.locator('[data-testid="discover-project-card"]').count()) === 1);
+
+    // 2. Empty Projects source collection: rawPeople = [mockProfiles[0]], rawProjects = []
+    customProfilesResponse = [mockProfiles[0]];
+    customProjectsResponse = [];
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
+
+    runAssertion('Projects empty state is shown when source collection is empty', await projEmpty.isVisible());
+    runAssertion('Projects empty state heading says "No Projects Available"', (await projEmpty.locator('h3').innerText()).includes('No Projects Available'));
+    runAssertion('Projects empty state text explains currently no collegiate projects registered', (await projEmpty.locator('p').innerText()).includes('currently no collegiate projects registered'));
+    runAssertion('People empty state is NOT shown because people exist in source collection', (await peopleEmpty.count()) === 0);
+    runAssertion('Person card renders when people exist', (await page.locator('[data-testid="discover-person-card"]').count()) === 1);
+
+    // 3. Both source collections empty: rawPeople = [], rawProjects = []
+    customProfilesResponse = [];
+    customProjectsResponse = [];
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
+
+    runAssertion('Both empty states are displayed when both source collections are empty', (await peopleEmpty.isVisible()) && (await projEmpty.isVisible()));
+    runAssertion('People heading says No People Records Available', (await peopleEmpty.locator('h3').innerText()).includes('No People Records Available'));
+    runAssertion('Projects heading says No Projects Available', (await projEmpty.locator('h3').innerText()).includes('No Projects Available'));
+
+    // Reset to canonical mocks
+    customProfilesResponse = null;
+    customProjectsResponse = null;
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
   });
 
   console.log('\n======================================================================');
