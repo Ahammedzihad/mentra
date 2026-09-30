@@ -873,6 +873,233 @@ async function runTests() {
     runAssertion('Provider startup returned matching fallback student profile', result.program === 'B.Tech' && result.specialization === 'Cyber Security');
   });
 
+  // --- SECTION 11: NAVBAR ENTRY POINT & RESPONSIVE ACCESSIBILITY (SUBCATEGORY 2) ---
+
+  await test('21: Desktop Navbar renders accessible Edit Profile button for student and preserves role dashboard badge', async () => {
+    // Reset fallback mock state from previous section
+    fallbackUserId = null;
+    fallbackMeta = null;
+    activeProfile = { ...defaultProfile };
+
+    // Restore standard student session in storage and reload
+    await page.evaluate(({ key, mockSession }) => {
+      localStorage.setItem(key, JSON.stringify(mockSession));
+    }, { key: storageKey, mockSession: defaultSession });
+
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.locator('#test-auth-loading').filter({ hasText: 'ready' }).waitFor({ timeout: 5000 });
+
+    // Ensure harness standalone modal is closed so only Navbar controls modal state
+    await page.evaluate(() => {
+      window.__profileHarness.setIsOpen(false);
+    });
+    await page.setViewportSize({ width: 1200, height: 800 });
+
+    const editBtn = page.locator('#navbar-edit-profile-btn');
+    runAssertion('Desktop Edit Profile button is present', (await editBtn.count()) === 1);
+    runAssertion('Desktop Edit Profile button is visible', await editBtn.isVisible());
+    runAssertion('Has aria-label="Edit Academic Profile"', (await editBtn.getAttribute('aria-label')) === 'Edit Academic Profile');
+    runAssertion('Has title="Edit Academic Profile"', (await editBtn.getAttribute('title')) === 'Edit Academic Profile');
+    runAssertion('Button text includes Edit Profile', (await editBtn.innerText()).includes('Edit Profile'));
+
+    // Profile badge link verification: must navigate to role dashboard
+    const badgeLink = page.locator('.desktop-auth a[href="/student"]');
+    runAssertion('Profile badge links to /student role dashboard', (await badgeLink.count()) === 1);
+    runAssertion('Profile badge displays member name', (await badgeLink.innerText()).includes('Alex Rivera'));
+  });
+
+  await test('22: Desktop Navbar button opens EditProfileModal with pre-filled profile and exactly one dialog instance', async () => {
+    // Initially no dialog should be open
+    runAssertion('No dialog open before click', (await page.locator('div[role="dialog"]').count()) === 0);
+
+    await page.click('#navbar-edit-profile-btn');
+    const dialog = page.locator('div[role="dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 3000 });
+
+    runAssertion('Exactly one modal dialog instance is rendered', (await dialog.count()) === 1);
+    runAssertion('Modal dialog has role="dialog"', (await dialog.getAttribute('role')) === 'dialog');
+    runAssertion('Modal dialog has aria-modal="true"', (await dialog.getAttribute('aria-modal')) === 'true');
+
+    // Pre-fill verification
+    const nameVal = await page.locator('#edit-profile-fullname').inputValue();
+    const progVal = await page.locator('#edit-profile-program').inputValue();
+    runAssertion('Name pre-filled from student profile', nameVal === 'Alex Rivera');
+    runAssertion('Program pre-filled from student profile', progVal === 'B.Tech');
+
+    // Dismiss modal via close button
+    await page.click('button[aria-label="Close dialog"]');
+    await dialog.waitFor({ state: 'detached', timeout: 3000 });
+    runAssertion('Modal closes when close button is clicked', (await page.locator('div[role="dialog"]').count()) === 0);
+  });
+
+  await test('23: Mobile Navbar renders toggle, opens drawer, and mobile Edit Profile button closes drawer while opening modal', async () => {
+    // Switch to mobile viewport
+    await page.setViewportSize({ width: 375, height: 667 });
+
+    // Desktop auth button should not be visible on mobile
+    const desktopBtn = page.locator('#navbar-edit-profile-btn');
+    runAssertion('Desktop Edit Profile button hidden on mobile viewport', !(await desktopBtn.isVisible()));
+
+    // Mobile toggle button should be visible
+    const mobileToggle = page.locator('button.mobile-toggle');
+    runAssertion('Mobile menu toggle button is visible', await mobileToggle.isVisible());
+
+    // Drawer is closed initially
+    const mobileEditBtn = page.locator('#navbar-mobile-edit-profile-btn');
+    runAssertion('Mobile Edit Profile button not attached or visible initially', (await mobileEditBtn.count()) === 0 || !(await mobileEditBtn.isVisible()));
+
+    // Click toggle to open mobile drawer
+    await mobileToggle.click();
+    await mobileEditBtn.waitFor({ state: 'visible', timeout: 3000 });
+    runAssertion('Mobile Edit Profile button is visible in expanded mobile drawer', await mobileEditBtn.isVisible());
+    runAssertion('Mobile button has aria-label="Edit Academic Profile"', (await mobileEditBtn.getAttribute('aria-label')) === 'Edit Academic Profile');
+    runAssertion('Mobile button text includes Edit Profile', (await mobileEditBtn.innerText()).includes('Edit Profile'));
+
+    // Clicking mobile Edit Profile button should:
+    // 1. Close mobile drawer (mobileEditBtn becomes detached)
+    // 2. Open EditProfileModal (dialog becomes visible)
+    await mobileEditBtn.click();
+
+    const dialog = page.locator('div[role="dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 3000 });
+    runAssertion('Modal dialog opened via mobile entry point', (await dialog.count()) === 1);
+
+    // Verify mobile drawer closed without conflicting with modal
+    runAssertion('Mobile menu drawer closed when modal opened', (await page.locator('#navbar-mobile-edit-profile-btn').count()) === 0);
+
+    // Cancel modal on mobile
+    await page.click('button:has-text("Cancel")');
+    await dialog.waitFor({ state: 'detached', timeout: 3000 });
+    runAssertion('Modal closed via Cancel button on mobile', (await page.locator('div[role="dialog"]').count()) === 0);
+  });
+
+  await test('24: Saving profile changes from modal opened via mobile navbar persists and updates state', async () => {
+    lastInterceptedRequest = null;
+    await page.setViewportSize({ width: 375, height: 667 });
+
+    // Open mobile drawer and click Edit Profile
+    await page.click('button.mobile-toggle');
+    await page.click('#navbar-mobile-edit-profile-btn');
+
+    const dialog = page.locator('div[role="dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 3000 });
+
+    // Modify bio and submit
+    await page.fill('#edit-profile-bio', 'Mobile navbar save verification bio.');
+    await page.click('button[type="submit"]');
+    await page.locator('.notice-box.success').waitFor({ state: 'visible', timeout: 3000 });
+
+    runAssertion('Save request was dispatched over wire', lastInterceptedRequest !== null);
+    runAssertion('Updated bio was saved', lastInterceptedRequest.data.bio === 'Mobile navbar save verification bio.');
+
+    await dialog.waitFor({ state: 'detached', timeout: 3000 });
+    runAssertion('Modal closed automatically after mobile save', (await page.locator('div[role="dialog"]').count()) === 0);
+  });
+
+  await test('25: Mentor account has access to Edit Profile on desktop and mobile with badge pointing to /mentor', async () => {
+    await page.setViewportSize({ width: 1200, height: 800 });
+
+    const mentorId = '00000000-0000-0000-0000-000000000002';
+    const mentorProfile = {
+      id: mentorId,
+      full_name: 'Dr. Evelyn Reed',
+      program: 'B.Tech',
+      specialization: 'AI & Machine Learning',
+      year: null,
+      bio: 'Faculty mentor in machine intelligence.',
+      department: 'Computer Science and Engineering',
+      course: null,
+      batch: null,
+      role: 'mentor',
+      is_verified: true,
+      created_at: '2026-09-01T00:00:00.000Z',
+    };
+    activeProfile = { ...mentorProfile };
+
+    const mentorSession = makeMockSession(mentorId, 'mentor@mentra.edu', {
+      full_name: 'Dr. Evelyn Reed',
+      role: 'mentor',
+    });
+
+    await page.evaluate(async ({ session }) => {
+      await window.__supabase.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+      });
+      await window.__profileAuth.refreshProfile();
+    }, { session: mentorSession });
+    await page.waitForFunction((id) => window.__profileAuth?.user?.id === id, mentorId);
+
+    // Desktop verification for mentor
+    const desktopBtn = page.locator('#navbar-edit-profile-btn');
+    runAssertion('Desktop Edit Profile button available for mentor', (await desktopBtn.count()) === 1);
+    runAssertion('Desktop Edit Profile button visible for mentor', await desktopBtn.isVisible());
+
+    // Mentor badge links to /mentor
+    const mentorBadge = page.locator('.desktop-auth a[href="/mentor"]');
+    runAssertion('Profile badge links to /mentor for mentor account', (await mentorBadge.count()) === 1);
+
+    // Mobile verification for mentor
+    await page.setViewportSize({ width: 375, height: 667 });
+    await page.click('button.mobile-toggle');
+    const mobileBtn = page.locator('#navbar-mobile-edit-profile-btn');
+    runAssertion('Mobile Edit Profile button available for mentor', (await mobileBtn.count()) === 1);
+    runAssertion('Mobile Edit Profile button visible for mentor', await mobileBtn.isVisible());
+
+    // Close mobile menu
+    await page.click('button.mobile-toggle');
+  });
+
+  await test('26: Admin account DOES NOT expose Edit Profile on desktop or mobile and badge links to /admin', async () => {
+    await page.setViewportSize({ width: 1200, height: 800 });
+
+    const adminId = '00000000-0000-0000-0000-000000000099';
+    const adminProfile = {
+      id: adminId,
+      full_name: 'System Administrator',
+      program: null,
+      specialization: null,
+      year: null,
+      bio: null,
+      department: null,
+      course: null,
+      batch: null,
+      role: 'admin',
+      is_verified: true,
+      created_at: '2026-09-01T00:00:00.000Z',
+    };
+    activeProfile = { ...adminProfile };
+
+    const adminSession = makeMockSession(adminId, 'admin@mentra.edu', {
+      full_name: 'System Administrator',
+      role: 'admin',
+    });
+
+    await page.evaluate(async ({ session }) => {
+      await window.__supabase.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+      });
+      await window.__profileAuth.refreshProfile();
+    }, { session: adminSession });
+    await page.waitForFunction((id) => window.__profileAuth?.user?.id === id, adminId);
+
+    // Desktop: admin must NOT see Edit Profile button
+    const desktopBtn = page.locator('#navbar-edit-profile-btn');
+    runAssertion('Admin account DOES NOT render desktop Edit Profile button', (await desktopBtn.count()) === 0);
+
+    // Admin profile badge links to /admin
+    const adminBadge = page.locator('.desktop-auth a[href="/admin"]');
+    runAssertion('Admin profile badge links to /admin dashboard', (await adminBadge.count()) === 1);
+
+    // Mobile: admin must NOT see Edit Profile button in drawer
+    await page.setViewportSize({ width: 375, height: 667 });
+    await page.click('button.mobile-toggle');
+
+    const mobileBtn = page.locator('#navbar-mobile-edit-profile-btn');
+    runAssertion('Admin account DOES NOT render mobile Edit Profile button', (await mobileBtn.count()) === 0);
+  });
+
   console.log('\n======================================================================');
   console.log(`  ALL ${passedTests}/${totalTests} TESTS PASSED CLEANLY!`);
   console.log('======================================================================\n');

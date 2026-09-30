@@ -1,13 +1,17 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Menu, X, ShieldCheck, Clock, LogOut, Sparkles } from 'lucide-react';
+import { Menu, X, ShieldCheck, Clock, LogOut, Sparkles, Edit3 } from 'lucide-react';
+import { EditProfileModal } from '../../features/profile/EditProfileModal';
 
 export const Navbar = () => {
   const { user, profile, signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+
+  const canEditProfile = Boolean(user && (profile?.role === 'student' || profile?.role === 'mentor'));
 
   const handleLogout = async () => {
     try {
@@ -21,15 +25,16 @@ export const Navbar = () => {
   const isActive = (path) => location.pathname === path;
 
   return (
-    <header
-      style={{
-        backgroundColor: 'var(--color-warm-ivory)',
-        borderBottom: '1px solid var(--border-subtle)',
-        position: 'sticky',
-        top: 0,
-        zIndex: 100,
-      }}
-    >
+    <>
+      <header
+        style={{
+          backgroundColor: 'var(--color-warm-ivory)',
+          borderBottom: '1px solid var(--border-subtle)',
+          position: 'sticky',
+          top: 0,
+          zIndex: 100,
+        }}
+      >
       <div
         className="container"
         style={{
@@ -291,6 +296,21 @@ export const Navbar = () => {
                 </div>
               </Link>
 
+              {canEditProfile && (
+                <button
+                  type="button"
+                  onClick={() => setIsEditProfileOpen(true)}
+                  className="btn btn-secondary btn-sm"
+                  id="navbar-edit-profile-btn"
+                  title="Edit Academic Profile"
+                  aria-label="Edit Academic Profile"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.45rem 0.75rem', fontSize: '0.825rem' }}
+                >
+                  <Edit3 size={14} />
+                  <span>Edit Profile</span>
+                </button>
+              )}
+
               <button
                 onClick={handleLogout}
                 className="btn btn-secondary btn-sm"
@@ -449,6 +469,23 @@ export const Navbar = () => {
                 <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                   Signed in as <strong>{profile?.full_name || user.email}</strong> ({profile?.role})
                 </div>
+                {canEditProfile && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setIsEditProfileOpen(true);
+                    }}
+                    className="btn btn-secondary btn-sm"
+                    id="navbar-mobile-edit-profile-btn"
+                    title="Edit Academic Profile"
+                    aria-label="Edit Academic Profile"
+                    style={{ width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.45rem' }}
+                  >
+                    <Edit3 size={15} />
+                    <span>Edit Profile</span>
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     handleLogout();
@@ -493,5 +530,13 @@ export const Navbar = () => {
         }
       `}</style>
     </header>
+
+    {canEditProfile && (
+      <EditProfileModal
+        isOpen={isEditProfileOpen}
+        onClose={() => setIsEditProfileOpen(false)}
+      />
+    )}
+  </>
   );
 };

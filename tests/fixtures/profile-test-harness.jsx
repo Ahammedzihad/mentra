@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider, useAuth } from '../../frontend/context/AuthContext';
 import { supabase } from '../../frontend/lib/supabase';
 import { EditProfileModal } from '../../features/profile/EditProfileModal';
+import { Navbar } from '../../frontend/components/Navbar';
 
 function HarnessContent({ isOpen, setIsOpen, closeCalls, setCloseCalls, setUpdatedCalls }) {
   const auth = useAuth();
@@ -56,15 +58,18 @@ function HarnessRoot() {
   }, [closeCalls, updatedCalls]);
 
   return (
-    <AuthProvider>
-      <HarnessContent
-        isOpen={isOpen}
-        setIsOpen={setIsOpen}
-        closeCalls={closeCalls}
-        setCloseCalls={setCloseCalls}
-        setUpdatedCalls={setUpdatedCalls}
-      />
-    </AuthProvider>
+    <MemoryRouter>
+      <AuthProvider>
+        <Navbar />
+        <HarnessContent
+          isOpen={isOpen}
+          setIsOpen={setIsOpen}
+          closeCalls={closeCalls}
+          setCloseCalls={setCloseCalls}
+          setUpdatedCalls={setUpdatedCalls}
+        />
+      </AuthProvider>
+    </MemoryRouter>
   );
 }
 
