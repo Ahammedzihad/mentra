@@ -1,5 +1,5 @@
 /**
- * Mentra Phase 5 Step 3, Subcategory 3 — Discover Page Results, Controls & Robustness Suite
+ * Mentra Phase 5 Step 3, Subcategory 4 — Discover Page & Navigation Verification Suite
  *
  * Tests:
  * 1. Authenticated route protection (/discover redirects when unauthenticated, opens cleanly when authenticated)
@@ -13,11 +13,14 @@
  * 9. Project result cards rendering (title, description, tags, and owner context)
  * 10. Per-section accessible empty states (distinguishes no matches from no directory records)
  * 11. Empty states hidden during loading and error states
- * 12. Navigation boundary check (confirms /discover is not exposed on navbar in this subcategory)
- * 13. Safe owner normalization: projects with empty array profiles (`profiles: []`) render without crashing and omit owner section
- * 14. Missing owner normalization: projects with absent or null owner relations render without crashing and omit owner section
- * 15. Whitespace-only optional values omission for People cards, Project descriptions/tags, and owner details
- * 16. Empty source collections: shows "no records available" empty states separately for People and Projects
+ * 12. Desktop navbar Discover link visibility and navigation to /discover
+ * 13. Mobile drawer Discover link, click closing drawer, and navigation to /discover
+ * 14. Unauthenticated visitors do not see Discover link on desktop or mobile
+ * 15. All authenticated roles see Discover link while preserving role badges and Edit Profile controls
+ * 16. Safe owner normalization: projects with empty array profiles (`profiles: []`) render without crashing and omit owner section
+ * 17. Missing owner normalization: projects with absent or null owner relations render without crashing and omit owner section
+ * 18. Whitespace-only optional values omission for People cards, Project descriptions/tags, and owner details
+ * 19. Empty source collections: shows "no records available" empty states separately for People and Projects
  */
 
 import { chromium } from 'playwright';
@@ -234,7 +237,7 @@ async function teardown() {
 
 async function runTests() {
   console.log('======================================================================');
-  console.log('  MENTRA PHASE 5 STEP 3, SUBCATEGORY 2 — DISCOVER PAGE SUITE');
+  console.log('  MENTRA PHASE 5 STEP 3, SUBCATEGORY 4 — DISCOVER PAGE & NAVIGATION SUITE');
   console.log('======================================================================\n');
 
   let passedTests = 0;
@@ -270,6 +273,9 @@ async function runTests() {
     created_at: '2026-09-01T00:00:00.000Z',
   };
 
+  let activeSession = defaultSession;
+  let activeProfile = studentProfile;
+
   let simulateNetworkError = false;
   let customProjectsResponse = null;
   let customProfilesResponse = null;
@@ -282,7 +288,7 @@ async function runTests() {
     await route.fulfill({
       status: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(defaultSession.user),
+      body: JSON.stringify(activeSession.user),
     });
   });
 
@@ -290,7 +296,7 @@ async function runTests() {
     await route.fulfill({
       status: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(defaultSession),
+      body: JSON.stringify(activeSession),
     });
   });
 
@@ -313,11 +319,15 @@ async function runTests() {
   await page.route('**/rest/v1/profiles*', async (route) => {
     const url = route.request().url();
     // Profile fetch for current user session in AuthContext
-    if (url.includes(`id=eq.${testStudentId}`)) {
+    if (activeProfile && url.includes(`id=eq.${activeProfile.id}`)) {
+      const isSingle = route.request().headers()['accept']?.includes('application/vnd.pgrst.object+json');
       await route.fulfill({
         status: 200,
-        headers: { 'Content-Type': 'application/json', 'Content-Range': '0-0/1' },
-        body: JSON.stringify([studentProfile]),
+        headers: {
+          'Content-Type': isSingle ? 'application/vnd.pgrst.object+json' : 'application/json',
+          'Content-Range': '0-0/1',
+        },
+        body: JSON.stringify(isSingle ? activeProfile : [activeProfile]),
       });
       return;
     }
@@ -345,7 +355,8 @@ async function runTests() {
     const unauthedContext = await browser.newContext();
     const unauthedPage = await unauthedContext.newPage();
 
-    await unauthedPage.goto(`${baseUrl}/discover`, { waitUntil: 'networkidle' });
+    await unauthedPage.goto(`${baseUrl}/discover`);
+    await unauthedPage.waitForURL(/\/login/, { timeout: 5000 });
     const currentUrl = unauthedPage.url();
 
     runAssertion('Redirects to /login when unauthenticated', currentUrl.includes('/login'));
@@ -354,7 +365,9 @@ async function runTests() {
 
   await test('2: Authenticated user accesses /discover cleanly', async () => {
     await page.addInitScript(({ key, session }) => {
-      localStorage.setItem(key, JSON.stringify(session));
+      if (!localStorage.getItem(key)) {
+        localStorage.setItem(key, JSON.stringify(session));
+      }
     }, { key: storageKey, session: defaultSession });
 
     await page.goto(`${baseUrl}/discover`, { waitUntil: 'networkidle' });
@@ -700,12 +713,152 @@ async function runTests() {
     await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
   });
 
-  await test('19: Navbar does not expose links to /discover in this subcategory', async () => {
-    const navLinks = page.locator('nav a[href="/discover"], .navbar a[href="/discover"]');
-    runAssertion('Navbar does not contain link to /discover', (await navLinks.count()) === 0);
+  await test('19: Desktop navbar renders Discover link for authenticated user and navigates to /discover', async () => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(`${baseUrl}/discover`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('h1:has-text("Discover")', { timeout: 5000 });
+
+    const desktopDiscoverLink = page.locator('#navbar-discover-link');
+    runAssertion('Desktop Discover link exists in navbar', (await desktopDiscoverLink.count()) === 1);
+    runAssertion('Desktop Discover link is visible on desktop viewport', await desktopDiscoverLink.isVisible());
+    runAssertion('Desktop Discover link points to /discover', (await desktopDiscoverLink.getAttribute('href')) === '/discover');
+    runAssertion('Desktop Discover link has text Discover', (await desktopDiscoverLink.innerText()).trim() === 'Discover');
+
+    // Navigate to projects and click Discover link to verify navigation
+    await page.click('a[href="/projects"]');
+    await page.waitForSelector('h1:has-text("Academic Projects")', { timeout: 5000 });
+    runAssertion('Navigated away to /projects', page.url().endsWith('/projects'));
+
+    await page.click('#navbar-discover-link');
+    await page.waitForSelector('h1:has-text("Discover")', { timeout: 5000 });
+    runAssertion('Clicking navbar Discover link navigates back to /discover', page.url().endsWith('/discover'));
   });
 
-  await test('20: Project with profiles: [] renders without crashing, remains in results, and has no owner section', async () => {
+  await test('20: Mobile drawer renders Discover link, navigates to /discover, and closes drawer', async () => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    await page.goto(`${baseUrl}/projects`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('h1:has-text("Academic Projects")', { timeout: 5000 });
+
+    // In mobile viewport, desktop nav is hidden and mobile toggle button is visible
+    const mobileToggle = page.locator('.mobile-toggle');
+    runAssertion('Mobile toggle button is visible on mobile viewport', await mobileToggle.isVisible());
+
+    // Mobile discover link should not be present before opening menu
+    const mobileDiscoverLink = page.locator('#navbar-mobile-discover-link');
+    runAssertion('Mobile Discover link not rendered when drawer closed', (await mobileDiscoverLink.count()) === 0);
+
+    // Open mobile drawer
+    await mobileToggle.click();
+    runAssertion('Mobile Discover link is visible when drawer opened', await mobileDiscoverLink.isVisible());
+    runAssertion('Mobile Discover link points to /discover', (await mobileDiscoverLink.getAttribute('href')) === '/discover');
+    runAssertion('Mobile Discover link has text Discover', (await mobileDiscoverLink.innerText()).trim() === 'Discover');
+
+    // Click mobile discover link: should navigate to /discover and close the drawer
+    await mobileDiscoverLink.click();
+    await page.waitForSelector('h1:has-text("Discover")', { timeout: 5000 });
+    runAssertion('Navigated to /discover on mobile', page.url().endsWith('/discover'));
+    runAssertion('Mobile drawer is closed after clicking Discover link', (await page.locator('#navbar-mobile-discover-link').count()) === 0);
+
+    // Restore desktop viewport
+    await page.setViewportSize({ width: 1280, height: 800 });
+  });
+
+  await test('21: Unauthenticated visitors do not see Discover link on desktop or mobile', async () => {
+    const unauthedContext = await browser.newContext();
+    const unauthedPage = await unauthedContext.newPage();
+
+    // Desktop viewport
+    await unauthedPage.setViewportSize({ width: 1280, height: 800 });
+    await unauthedPage.goto(`${baseUrl}/projects`, { waitUntil: 'networkidle' });
+
+    runAssertion('Unauthenticated desktop navbar has no Discover link', (await unauthedPage.locator('#navbar-discover-link').count()) === 0);
+    runAssertion('Unauthenticated desktop navbar has no link to /discover', (await unauthedPage.locator('a[href="/discover"]').count()) === 0);
+    runAssertion('Unauthenticated desktop navbar preserves Overview and Projects', (await unauthedPage.locator('a[href="/"]').count()) >= 1 && (await unauthedPage.locator('a[href="/projects"]').count()) >= 1);
+    runAssertion('Unauthenticated desktop navbar preserves Log In and Join', (await unauthedPage.locator('a[href="/login"]').count()) >= 1 && (await unauthedPage.locator('a[href="/signup"]').count()) >= 1);
+
+    // Mobile viewport
+    await unauthedPage.setViewportSize({ width: 375, height: 667 });
+    await unauthedPage.click('.mobile-toggle');
+    runAssertion('Unauthenticated mobile drawer has no Discover link', (await unauthedPage.locator('#navbar-mobile-discover-link').count()) === 0);
+    runAssertion('Unauthenticated mobile drawer has no link to /discover', (await unauthedPage.locator('a[href="/discover"]').count()) === 0);
+
+    await unauthedContext.close();
+  });
+
+  await test('22: All authenticated roles see Discover link while preserving role badges and Edit Profile controls', async () => {
+    // 1. Student verification
+    runAssertion('Student sees desktop Discover link', (await page.locator('#navbar-discover-link').count()) === 1);
+    runAssertion('Student sees Student Space link', (await page.locator('a[href="/student"]').count()) >= 1);
+    runAssertion('Student profile badge links to /student', (await page.locator('.desktop-auth a[href="/student"]').count()) === 1);
+    runAssertion('Student has Edit Profile button', (await page.locator('#navbar-edit-profile-btn').count()) === 1);
+
+    // 2. Mentor verification
+    const mentorSession = makeMockSession(testStudentId, 'evelyn@mentra.edu', {
+      full_name: 'Dr. Evelyn Reed',
+      role: 'mentor',
+    });
+    const mentorProfile = {
+      id: testStudentId,
+      full_name: 'Dr. Evelyn Reed',
+      program: 'B.Tech',
+      specialization: 'AI & Machine Learning',
+      year: null,
+      role: 'mentor',
+      is_verified: true,
+      department: 'Computer Science',
+      created_at: '2026-08-15T00:00:00.000Z',
+    };
+
+    activeSession = mentorSession;
+    activeProfile = mentorProfile;
+    await page.evaluate(({ key, session }) => {
+      localStorage.setItem(key, JSON.stringify(session));
+    }, { key: storageKey, session: mentorSession });
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('h1:has-text("Discover")', { timeout: 5000 });
+
+    runAssertion('Mentor sees desktop Discover link', (await page.locator('#navbar-discover-link').count()) === 1);
+    runAssertion('Mentor sees Mentor Studio link', (await page.locator('a[href="/mentor"]').count()) >= 1);
+    runAssertion('Mentor profile badge links to /mentor', (await page.locator('.desktop-auth a[href="/mentor"]').count()) === 1);
+    runAssertion('Mentor has Edit Profile button', (await page.locator('#navbar-edit-profile-btn').count()) === 1);
+
+    // 3. Admin verification
+    const adminSession = makeMockSession(testStudentId, 'admin@mentra.edu', {
+      full_name: 'System Administrator',
+      role: 'admin',
+    });
+    const adminProfile = {
+      id: testStudentId,
+      full_name: 'System Administrator',
+      role: 'admin',
+      is_verified: true,
+      created_at: '2026-07-01T00:00:00.000Z',
+    };
+
+    activeSession = adminSession;
+    activeProfile = adminProfile;
+    await page.evaluate(({ key, session }) => {
+      localStorage.setItem(key, JSON.stringify(session));
+    }, { key: storageKey, session: adminSession });
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('h1:has-text("Discover")', { timeout: 5000 });
+
+    runAssertion('Admin sees desktop Discover link', (await page.locator('#navbar-discover-link').count()) === 1);
+    runAssertion('Admin sees Admin Portal link', (await page.locator('a[href="/admin"]').count()) >= 1);
+    runAssertion('Admin profile badge links to /admin', (await page.locator('.desktop-auth a[href="/admin"]').count()) === 1);
+    runAssertion('Admin DOES NOT have Edit Profile button', (await page.locator('#navbar-edit-profile-btn').count()) === 0);
+
+    // Reset back to student
+    activeSession = defaultSession;
+    activeProfile = studentProfile;
+    await page.evaluate(({ key, session }) => {
+      localStorage.setItem(key, JSON.stringify(session));
+    }, { key: storageKey, session: defaultSession });
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('h1:has-text("Discover")', { timeout: 5000 });
+  });
+
+  await test('23: Project with profiles: [] renders without crashing, remains in results, and has no owner section', async () => {
     const emptyArrayOwnerProject = {
       id: 'proj-empty-array-owner',
       title: 'Autonomous Drone Navigation',
@@ -737,7 +890,7 @@ async function runTests() {
     await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
   });
 
-  await test('21: Project with no owner relation (null or absent) renders without crashing and omits owner details', async () => {
+  await test('24: Project with no owner relation (null or absent) renders without crashing and omits owner details', async () => {
     const noOwnerProjects = [
       {
         id: 'proj-null-owner',
@@ -780,7 +933,7 @@ async function runTests() {
     await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
   });
 
-  await test('22: Whitespace-only optional values are omitted for People cards, Project descriptions/tags, and owner details while nonblank values render', async () => {
+  await test('25: Whitespace-only optional values are omitted for People cards, Project descriptions/tags, and owner details while nonblank values render', async () => {
     const whitespacePeople = [
       {
         id: 'user-ws-1',
@@ -868,7 +1021,7 @@ async function runTests() {
     await page.locator('#discover-results-summary').waitFor({ state: 'visible', timeout: 5000 });
   });
 
-  await test('23: Empty source collections show "no records available" state separately for People and Projects', async () => {
+  await test('26: Empty source collections show "no records available" state separately for People and Projects', async () => {
     // 1. Empty People source collection: rawPeople = [], rawProjects = [mockProjects[0]]
     customProfilesResponse = [];
     customProjectsResponse = [mockProjects[0]];

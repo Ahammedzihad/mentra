@@ -117,6 +117,23 @@ export const Navbar = () => {
 
           {user && (
             <Link
+              to="/discover"
+              id="navbar-discover-link"
+              style={{
+                fontSize: '0.9rem',
+                fontWeight: isActive('/discover') ? '600' : '500',
+                color: isActive('/discover') ? 'var(--color-primary-dark)' : 'var(--text-secondary)',
+                borderBottom: isActive('/discover') ? '2px solid var(--color-terracotta)' : '2px solid transparent',
+                paddingBottom: '0.25rem',
+                transition: 'var(--transition-smooth)',
+              }}
+            >
+              Discover
+            </Link>
+          )}
+
+          {user && (
+            <Link
               to="/journey"
               style={{
                 fontSize: '0.9rem',
@@ -376,6 +393,21 @@ export const Navbar = () => {
           >
             Projects
           </Link>
+
+          {user && (
+            <Link
+              to="/discover"
+              id="navbar-mobile-discover-link"
+              onClick={() => setMobileMenuOpen(false)}
+              style={{
+                fontSize: '1rem',
+                fontWeight: isActive('/discover') ? '600' : '500',
+                color: isActive('/discover') ? 'var(--color-terracotta)' : 'var(--text-primary)',
+              }}
+            >
+              Discover
+            </Link>
+          )}
 
           {user && (
             <Link
