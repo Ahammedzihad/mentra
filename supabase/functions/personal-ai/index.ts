@@ -91,7 +91,213 @@ Here are three structured suggestions for your academic and project trajectory:
 Keep progressing with your work—every documented step adds lasting value to your portfolio!`;
 }
 
-Deno.serve(async (req) => {
+/**
+ * Normalizes and validates candidate project tags according to Phase 4 rules:
+ * 1. Trim leading and trailing whitespace
+ * 2. Convert to lowercase
+ * 3. Ignore empty/blank tags
+ * 4. Reject tags exceeding 24 characters
+ * 5. Enforce allowed characters: letters, numbers, spaces, hyphens (/^[a-z0-9 -]+$/)
+ * 6. Reject normalized duplicates
+ * 7. Enforce maximum of 6 tags per project
+ */
+export function normalizeProjectTags(rawTags: unknown): string[] {
+  if (!Array.isArray(rawTags)) return [];
+  const normalizedList: string[] = [];
+
+  for (const raw of rawTags) {
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const normalized = trimmed.toLowerCase();
+
+    // Max 24 chars
+    if (normalized.length > 24) continue;
+
+    // Allowed: letters, numbers, spaces, hyphens
+    if (!/^[a-z0-9 -]+$/.test(normalized)) continue;
+
+    // Deduplicate
+    if (normalizedList.includes(normalized)) continue;
+
+    normalizedList.push(normalized);
+
+    // Max 6 tags per project
+    if (normalizedList.length >= 6) break;
+  }
+
+  return normalizedList;
+}
+
+interface ProjectDraftParams {
+  prompt: string;
+  geminiApiKey: string;
+  corsHeaders: Record<string, string>;
+}
+
+async function handleProjectDraftRequest({
+  prompt,
+  geminiApiKey,
+  corsHeaders,
+}: ProjectDraftParams): Promise<Response> {
+  const projectDraftSystemInstruction = `You are Mentra Project Architect, an expert academic and technical project assistant.
+The user is providing an idea or prompt for a collegiate academic or software project.
+You must analyze the prompt and generate a structured project draft in valid JSON format.
+
+JSON SCHEMA:
+{
+  "title": "A concise, academic project title (e.g. 3 to 8 words)",
+  "description": "A comprehensive, well-structured description explaining the project scope, technical or research methodology, key objectives, and expected outcomes.",
+  "tags": ["relevant", "lowercase", "tags"]
+}
+
+TAG FORMATTING RULES:
+- Include 2 to 5 relevant tags.
+- Each tag must be concise, lowercase, with only letters, numbers, spaces, and hyphens.
+- Do NOT include special characters, punctuation, or hashtags (#).
+- Maximum 24 characters per tag.
+
+CRITICAL INSTRUCTIONS:
+- You must output ONLY the JSON object. Do not include markdown code fences, commentary, or text before or after the JSON.
+- Never output an empty title or description.
+- Never invent visibility, user, or status fields.`;
+
+  const geminiEndpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
+
+  const geminiPayload = {
+    systemInstruction: {
+      parts: [{ text: projectDraftSystemInstruction }],
+    },
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: prompt }],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 1024,
+      responseMimeType: 'application/json',
+    },
+  };
+
+  const geminiResponse = await fetch(geminiEndpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': geminiApiKey,
+    },
+    body: JSON.stringify(geminiPayload),
+  });
+
+  if (!geminiResponse.ok) {
+    const errorText = await geminiResponse.text();
+    let errorMessage = `Gemini API responded with HTTP status ${geminiResponse.status}`;
+    try {
+      const errorJson = JSON.parse(errorText);
+      if (errorJson.error?.message) {
+        errorMessage = errorJson.error.message;
+      }
+    } catch {
+      // use fallback message
+    }
+
+    console.error('Gemini API Project Draft Error:', errorMessage);
+
+    return new Response(
+      JSON.stringify({
+        error: 'GEMINI_API_ERROR',
+        message: `Gemini AI service error: ${errorMessage}`,
+      }),
+      { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  const geminiResult = await geminiResponse.json();
+  const candidate = geminiResult.candidates?.[0];
+  const replyText = candidate?.content?.parts?.[0]?.text;
+
+  if (!replyText || !replyText.trim()) {
+    return new Response(
+      JSON.stringify({
+        error: 'EMPTY_RESPONSE',
+        message: 'Gemini AI returned an empty response. Please try rephrasing your project prompt.',
+      }),
+      { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  let cleanedText = replyText.trim();
+  if (cleanedText.startsWith('```')) {
+    cleanedText = cleanedText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  }
+
+  let parsedDraft: any;
+  try {
+    parsedDraft = JSON.parse(cleanedText);
+  } catch {
+    return new Response(
+      JSON.stringify({
+        error: 'MALFORMED_AI_OUTPUT',
+        message: 'The AI model returned malformed output that could not be parsed as a structured project draft.',
+      }),
+      { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  if (
+    !parsedDraft ||
+    typeof parsedDraft !== 'object' ||
+    typeof parsedDraft.title !== 'string' ||
+    !parsedDraft.title.trim()
+  ) {
+    return new Response(
+      JSON.stringify({
+        error: 'INVALID_DRAFT_CONTENT',
+        message: 'The AI model failed to produce a valid project title.',
+      }),
+      { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  if (typeof parsedDraft.description !== 'string' || !parsedDraft.description.trim()) {
+    return new Response(
+      JSON.stringify({
+        error: 'INVALID_DRAFT_CONTENT',
+        message: 'The AI model failed to produce a valid project description.',
+      }),
+      { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  if (!Array.isArray(parsedDraft.tags)) {
+    return new Response(
+      JSON.stringify({
+        error: 'INVALID_DRAFT_CONTENT',
+        message: 'The AI model failed to produce valid project tags.',
+      }),
+      { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  const draftTitle = parsedDraft.title.trim();
+  const draftDescription = parsedDraft.description.trim();
+  const draftTags = normalizeProjectTags(parsedDraft.tags);
+
+  return new Response(
+    JSON.stringify({
+      draft: {
+        title: draftTitle,
+        description: draftDescription,
+        tags: draftTags,
+      },
+      model: 'gemini-3.6-flash',
+    }),
+    { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  );
+}
+
+export async function handleRequest(req: Request): Promise<Response> {
   const corsHeaders = getCorsHeaders(req);
 
   // Handle CORS preflight request immediately
@@ -198,39 +404,96 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { message, history = [] } = body;
+    // 5. Determine and validate request mode
+    const rawMode = body.mode;
+    let effectiveMode = 'chat';
 
-    // 5. Input Validation on Message
-    if (message === undefined || message === null) {
-      return new Response(
-        JSON.stringify({ error: 'BAD_REQUEST', message: 'Inquiry message is required.' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (rawMode !== undefined && rawMode !== null) {
+      if (typeof rawMode !== 'string') {
+        return new Response(
+          JSON.stringify({ error: 'BAD_REQUEST', message: 'Request mode must be a string.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const trimmedMode = rawMode.trim().toLowerCase();
+      if (trimmedMode === 'chat' || trimmedMode === 'project_draft') {
+        effectiveMode = trimmedMode;
+      } else {
+        return new Response(
+          JSON.stringify({
+            error: 'BAD_REQUEST',
+            message: `Unsupported request mode '${rawMode}'. Supported modes are 'chat' and 'project_draft'.`,
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
-    if (typeof message !== 'string') {
-      return new Response(
-        JSON.stringify({ error: 'BAD_REQUEST', message: 'Inquiry message must be a string.' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    // 6. Input Validation based on mode
+    let message = '';
+    let projectPrompt = '';
+    const history = body.history || [];
 
-    if (!message.trim()) {
-      return new Response(
-        JSON.stringify({ error: 'BAD_REQUEST', message: 'Inquiry message cannot be empty.' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Maximum 2,000 characters permitted
-    if (message.length > 2000) {
-      return new Response(
-        JSON.stringify({
-          error: 'MESSAGE_TOO_LONG',
-          message: `Inquiry message exceeds the maximum allowed length of 2,000 characters (received ${message.length} characters).`,
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (effectiveMode === 'project_draft') {
+      const rawPrompt = body.prompt !== undefined ? body.prompt : body.message;
+      if (rawPrompt === undefined || rawPrompt === null) {
+        return new Response(
+          JSON.stringify({ error: 'BAD_REQUEST', message: 'Project prompt is required.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (typeof rawPrompt !== 'string') {
+        return new Response(
+          JSON.stringify({ error: 'BAD_REQUEST', message: 'Project prompt must be a string.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (!rawPrompt.trim()) {
+        return new Response(
+          JSON.stringify({ error: 'BAD_REQUEST', message: 'Project prompt cannot be empty.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (rawPrompt.length > 2000) {
+        return new Response(
+          JSON.stringify({
+            error: 'MESSAGE_TOO_LONG',
+            message: `Project prompt exceeds the maximum allowed length of 2,000 characters (received ${rawPrompt.length} characters).`,
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      projectPrompt = rawPrompt.trim();
+    } else {
+      const rawMessage = body.message;
+      if (rawMessage === undefined || rawMessage === null) {
+        return new Response(
+          JSON.stringify({ error: 'BAD_REQUEST', message: 'Inquiry message is required.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (typeof rawMessage !== 'string') {
+        return new Response(
+          JSON.stringify({ error: 'BAD_REQUEST', message: 'Inquiry message must be a string.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (!rawMessage.trim()) {
+        return new Response(
+          JSON.stringify({ error: 'BAD_REQUEST', message: 'Inquiry message cannot be empty.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (rawMessage.length > 2000) {
+        return new Response(
+          JSON.stringify({
+            error: 'MESSAGE_TOO_LONG',
+            message: `Inquiry message exceeds the maximum allowed length of 2,000 characters (received ${rawMessage.length} characters).`,
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      message = rawMessage.trim();
     }
 
     // 6. Durable Per-User Server-Side Rate Limiting (3 requests / 60 seconds)
@@ -296,6 +559,15 @@ Deno.serve(async (req) => {
         }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // 8b. Dispatch to project_draft handler if requested
+    if (effectiveMode === 'project_draft') {
+      return await handleProjectDraftRequest({
+        prompt: projectPrompt,
+        geminiApiKey,
+        corsHeaders,
+      });
     }
 
     let systemInstruction = '';
@@ -544,4 +816,8 @@ GUIDANCE PRINCIPLES:
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
-});
+}
+
+if (typeof Deno !== 'undefined' && typeof Deno.serve === 'function') {
+  Deno.serve((req) => handleRequest(req));
+}
