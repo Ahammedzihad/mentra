@@ -9,15 +9,26 @@ import {
   UserPlus,
   UserMinus,
   Loader2,
+  Sparkles,
+  Wand2,
+  Lock,
 } from 'lucide-react';
 import { ProjectVisibilitySelector } from './ProjectVisibilitySelector';
 import { ProjectTagsInput } from './ProjectTagsInput';
 import { supabase, isSupabaseConfigured } from '../../frontend/lib/supabase';
 import { useAuth } from '../../frontend/context/AuthContext';
+import {
+  requestProjectDraft,
+  prepareProjectInsert,
+  insertProjectRecord,
+} from './projectDraftService';
 
-
-
-export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
+export const CreateProjectModal = ({
+  isOpen,
+  onClose,
+  onProjectCreated,
+  initialMode = 'manual',
+}) => {
   const { user, profile } = useAuth();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -32,6 +43,24 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+
+  // AI-Assisted Project Drafting State (Phase 6 Part A, Step 2)
+  const [isAiMode, setIsAiMode] = useState(initialMode === 'ai');
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+  const [isAiAssisted, setIsAiAssisted] = useState(false);
+  const [aiDraftSuccess, setAiDraftSuccess] = useState(false);
+  const [aiDraftError, setAiDraftError] = useState(null);
+
+  // Synchronize initial mode when modal becomes active
+  useEffect(() => {
+    if (!isOpen) {
+      setIsAiMode(initialMode === 'ai');
+      setIsAiAssisted(false);
+      setAiDraftSuccess(false);
+      setAiDraftError(null);
+    }
+  }, [isOpen, initialMode]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -101,20 +130,59 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
     setStagedUsers((prev) => prev.filter((u) => u.id !== userId));
   };
 
+  const handleGenerateAiDraft = async () => {
+    setAiDraftError(null);
+    setError(null);
+
+    if (!aiPrompt.trim()) {
+      setAiDraftError('Please enter a project prompt to generate an AI draft.');
+      return;
+    }
+
+    if (!user) {
+      setAiDraftError('You must be authenticated to generate an AI project draft.');
+      return;
+    }
+
+    if (!isSupabaseConfigured) {
+      setAiDraftError('Supabase is not configured yet. Add your credentials in .env to connect.');
+      return;
+    }
+
+    setIsGeneratingDraft(true);
+
+    try {
+      const draft = await requestProjectDraft({
+        prompt: aiPrompt,
+        clientOverride: supabase,
+      });
+
+      // Populate existing project form with the returned structured draft
+      setTitle(draft.title);
+      setDescription(draft.description);
+      setTags(draft.tags);
+      setIsAiAssisted(true);
+      setVisibility('private'); // Enforce private default for AI drafts
+      setAiDraftSuccess(true);
+      setAiDraftError(null);
+    } catch (err) {
+      console.error('Error generating AI project draft:', err);
+      setAiDraftError(err.message || 'Failed to generate AI project draft. Please try again.');
+    } finally {
+      setIsGeneratingDraft(false);
+    }
+  };
+
+  const handleResetToManual = () => {
+    setIsAiAssisted(false);
+    setAiDraftSuccess(false);
+    setVisibility('college');
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
     setSharesError(null);
-
-    if (!title.trim()) {
-      setError('Please provide a project title.');
-      return;
-    }
-
-    if (!description.trim()) {
-      setError('Please provide a project description or abstract.');
-      return;
-    }
 
     if (!user) {
       setError('You must be authenticated to create a project.');
@@ -129,42 +197,25 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
     setLoading(true);
 
     try {
-      // 1. Insert into projects with visibility and tags
-      const { data: projectData, error: insertError } = await supabase
-        .from('projects')
-        .insert([
-          {
-            user_id: user.id,
-            title: title.trim(),
-            description: description.trim(),
-            visibility: visibility,
-            tags: tags,
-          },
-        ])
-        .select('*, profiles:user_id(full_name, department, role, is_verified)')
-        .single();
+      // Validate and prepare insertion through the trusted boundary.
+      // Every AI-assisted project explicitly uses visibility: 'private'.
+      // Project owner is derived strictly from the authenticated user (user.id).
+      const { projectPayload, shareRows } = prepareProjectInsert({
+        title,
+        description,
+        tags,
+        visibility,
+        isAiAssisted,
+        user,
+        stagedUsers,
+      });
 
-      if (insertError) throw insertError;
-
-      // 2. If visibility is 'selected' and there are staged users, insert shares
-      if (visibility === 'selected' && stagedUsers.length > 0) {
-        const shareRows = stagedUsers.map((u) => ({
-          project_id: projectData.id,
-          shared_with: u.id,
-        }));
-
-        const { error: shareInsertError } = await supabase
-          .from('project_shares')
-          .insert(shareRows);
-
-        if (shareInsertError) {
-          console.error('Error creating project shares:', shareInsertError);
-          setSharesError(
-            'Project created, but some shares could not be saved: ' +
-              shareInsertError.message
-          );
-        }
-      }
+      // Save through the application's normal authenticated project INSERT path
+      const projectData = await insertProjectRecord({
+        projectPayload,
+        shareRows,
+        clientOverride: supabase,
+      });
 
       const projectWithProfile = {
         ...projectData,
@@ -185,6 +236,10 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
         setStagedUsers([]);
         setSearchQuery('');
         setSearchResults([]);
+        setIsAiAssisted(false);
+        setAiPrompt('');
+        setAiDraftSuccess(false);
+        setAiDraftError(null);
         setSuccess(false);
         onClose();
       }, 500);
@@ -242,6 +297,124 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
             <X size={20} />
           </button>
         </div>
+
+        {/* Mode Selector Tabs */}
+        <div
+          style={{
+            display: 'flex',
+            gap: '0.5rem',
+            marginBottom: '1.25rem',
+            borderBottom: '1px solid var(--border-subtle)',
+            paddingBottom: '0.75rem',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setIsAiMode(false)}
+            className={`btn btn-sm ${!isAiMode ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+          >
+            <FolderPlus size={14} />
+            <span>Manual Entry</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsAiMode(true)}
+            className={`btn btn-sm ${isAiMode ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+            id="btn-tab-ai-draft"
+          >
+            <Sparkles size={14} style={{ color: isAiMode ? 'inherit' : 'var(--color-terracotta)' }} />
+            <span>Draft with AI</span>
+          </button>
+        </div>
+
+        {/* AI Project Drafter Panel (Phase 6 Part A) */}
+        {isAiMode && (
+          <div
+            className="card-academic"
+            style={{
+              padding: '1.15rem',
+              marginBottom: '1.25rem',
+              backgroundColor: 'var(--color-warm-ivory-light)',
+              border: '1px solid var(--border-subtle)',
+              borderLeft: '4px solid var(--color-terracotta)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+              <Sparkles size={16} style={{ color: 'var(--color-terracotta)' }} />
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-primary-dark)' }}>
+                Personal AI Project Drafter
+              </span>
+              <span className="badge-dept terracotta" style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem' }}>
+                Phase 6
+              </span>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem', lineHeight: 1.45 }}>
+              Describe your research hypothesis, technical pipeline, or creative concept in plain language. Mentra’s Personal AI will synthesize an academic title, description, and suggested tags for your review.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <textarea
+                id="ai-project-prompt"
+                className="form-textarea"
+                rows={2}
+                placeholder="e.g. A decentralized identity verification system using zero-knowledge proofs for student credentials..."
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                disabled={isGeneratingDraft || loading}
+                style={{ fontSize: '0.825rem' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', alignItems: 'center' }}>
+                {isAiAssisted && (
+                  <button
+                    type="button"
+                    onClick={handleResetToManual}
+                    className="btn btn-secondary btn-sm"
+                    style={{ fontSize: '0.75rem' }}
+                  >
+                    Clear AI Draft State
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleGenerateAiDraft}
+                  disabled={isGeneratingDraft || loading || !aiPrompt.trim()}
+                  className="btn btn-primary btn-sm"
+                  id="btn-generate-ai-draft"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                >
+                  {isGeneratingDraft ? (
+                    <>
+                      <Loader2 size={13} style={{ animation: 'spin 0.8s linear infinite' }} />
+                      <span>Synthesizing Draft...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 size={13} />
+                      <span>Generate Project Draft</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {aiDraftError && (
+              <div className="notice-box error" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
+                <AlertCircle size={15} style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: '0.8rem' }}>{aiDraftError}</span>
+              </div>
+            )}
+
+            {isAiAssisted && aiDraftSuccess && (
+              <div className="notice-box success" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
+                <CheckCircle2 size={15} style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: '0.8rem' }}>
+                  Project draft populated! Review and edit the fields below. In accordance with Mentra safety protocols, this project will be saved as <strong>Private</strong>.
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         {error && (
           <div className="notice-box error">
@@ -303,15 +476,43 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
             disabled={loading}
           />
 
-          {/* Visibility Selector */}
-          <ProjectVisibilitySelector
-            value={visibility}
-            onChange={setVisibility}
-            disabled={loading}
-          />
+          {/* Visibility Section */}
+          {isAiAssisted ? (
+            <div
+              className="card-academic"
+              style={{
+                marginTop: '1.25rem',
+                padding: '1rem',
+                backgroundColor: 'var(--color-warm-ivory-light)',
+                border: '1px solid var(--border-subtle)',
+                borderLeft: '4px solid var(--color-primary-dark)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Lock size={16} style={{ color: 'var(--color-primary-dark)' }} />
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-primary-dark)' }}>
+                    Project Visibility: Private (Enforced)
+                  </span>
+                </div>
+                <span className="badge-dept" style={{ fontSize: '0.7rem' }}>
+                  Safety Default
+                </span>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.45 }}>
+                AI-assisted project drafts are strictly saved as <strong>Private</strong> upon creation so you can review and refine them in complete privacy. Once created, you can publish to College or Public anytime via the Edit Project screen.
+              </p>
+            </div>
+          ) : (
+            <ProjectVisibilitySelector
+              value={visibility}
+              onChange={setVisibility}
+              disabled={loading}
+            />
+          )}
 
-          {/* Selected Users Management Section (Visible when visibility === 'selected') */}
-          {visibility === 'selected' && (
+          {/* Selected Users Management Section (Visible when visibility === 'selected' and manual) */}
+          {!isAiAssisted && visibility === 'selected' && (
             <div
               style={{
                 marginTop: '1.25rem',
@@ -332,17 +533,11 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
                     gap: '0.4rem',
                   }}
                 >
-                  <Users size={14} />
-                  <span>Selected Access Roster</span>
+                  <Users size={15} />
+                  <span>Grant Direct Scholar Access</span>
                 </div>
-                <p
-                  style={{
-                    fontSize: '0.75rem',
-                    color: 'var(--text-muted)',
-                    margin: '0.2rem 0 0 0',
-                  }}
-                >
-                  Search and add collegiate scholars or mentors who should be granted read access.
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0 0' }}>
+                  Search and stage specific students or verified faculty mentors to view this project.
                 </p>
               </div>
 
@@ -563,7 +758,7 @@ export const CreateProjectModal = ({ isOpen, onClose, onProjectCreated }) => {
               disabled={loading}
             >
               <FolderPlus size={16} />
-              <span>{loading ? 'Publishing...' : 'Publish Project'}</span>
+              <span>{loading ? 'Publishing...' : isAiAssisted ? 'Save Private Project' : 'Publish Project'}</span>
             </button>
           </div>
         </form>
