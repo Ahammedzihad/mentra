@@ -46,7 +46,7 @@ globalThis.Deno = {
 };
 
 // Import production handler and helpers
-const { handleRequest, normalizeProjectTags } = await import(
+const { handleRequest, normalizeProjectTags, GEMINI_MODEL } = await import(
   '../supabase/functions/personal-ai/index.ts'
 );
 
@@ -74,6 +74,7 @@ async function test(name, fn) {
 
 // Mock HTTP Fetch Boundary
 let geminiResponseMock = null;
+let lastGeminiRequest = null;
 let rateLimitAllowed = true;
 let userRole = 'student';
 let isVerified = true;
@@ -86,6 +87,16 @@ function setupMockFetch() {
 
     // Mock Gemini API
     if (urlStr.includes('generativelanguage.googleapis.com')) {
+      let parsedBody = null;
+      try {
+        parsedBody = typeof options?.body === 'string' ? JSON.parse(options.body) : options?.body;
+      } catch {}
+      lastGeminiRequest = {
+        url: urlStr,
+        method: options?.method,
+        headers: options?.headers || {},
+        body: parsedBody,
+      };
       if (typeof geminiResponseMock === 'function') {
         return geminiResponseMock(url, options);
       }
@@ -261,7 +272,7 @@ try {
     assert(res.status === 200, 'Returns HTTP 200');
     const json = await res.json();
     assert(json.reply === 'Here is structured advice on your academic research roadmap.', 'Returns reply string');
-    assert(json.model === 'gemini-3.6-flash', 'Identifies model as gemini-3.6-flash');
+    assert(json.model === 'gemini-3.8-flash', 'Identifies model as gemini-3.8-flash');
     assert(json.draft === undefined, 'Does NOT include draft property in chat response');
   });
 
@@ -283,7 +294,7 @@ try {
     assert(res.status === 200, 'Returns HTTP 200');
     const json = await res.json();
     assert(json.reply === 'Faculty guidance on project milestones.', 'Returns reply string');
-    assert(json.model === 'gemini-3.6-flash', 'Returns model property');
+    assert(json.model === 'gemini-3.8-flash', 'Returns model property');
     assert(json.draft === undefined, 'No draft property in chat response');
   });
 
@@ -336,7 +347,7 @@ try {
       'Sanitizes and normalizes draft tags adhering strictly to Phase 4 rules'
     );
     assert(json.draft.visibility === undefined, 'Strict boundary: draft does NOT contain visibility');
-    assert(json.model === 'gemini-3.6-flash', 'Identifies model as gemini-3.6-flash');
+    assert(json.model === 'gemini-3.8-flash', 'Identifies model as gemini-3.8-flash');
   });
 
   // Test 6: Accepts prompt in body.message if prompt property is absent in project_draft mode
@@ -559,6 +570,167 @@ try {
     const getJson = await getRes.json();
     assert(getJson.function === 'personal-ai', 'Health check identifies function');
     assert(getJson.configured === true, 'Identifies as configured');
+    assert(getJson.model === 'gemini-3.8-flash', 'Health check identifies model as gemini-3.8-flash');
+  });
+
+  // Test 12: Production request construction, headers, payloads, and response contracts for chat and draft modes
+  await test('Verifies production Gemini request construction, headers, and response shapes for chat and draft modes', async () => {
+    assert(GEMINI_MODEL === 'gemini-3.8-flash', 'Exported GEMINI_MODEL constant is gemini-3.8-flash');
+
+    // 12a. Conversational Chat Mode
+    lastGeminiRequest = null;
+    geminiResponseMock = {
+      candidates: [
+        {
+          content: {
+            parts: [{ text: 'Grounded mentorship guidance.' }],
+          },
+        },
+      ],
+    };
+
+    const chatRes = await handleRequest(
+      createRequest({
+        mode: 'chat',
+        message: 'How do I organize sprint retrospective milestones?',
+        history: [
+          { role: 'user', content: 'What is agile development?' },
+          { role: 'assistant', content: 'Agile development is an iterative approach.' },
+        ],
+      })
+    );
+
+    assert(chatRes.status === 200, 'Chat request returns HTTP 200');
+    const chatJson = await chatRes.json();
+
+    // Verify chat response contract
+    assert(
+      JSON.stringify(Object.keys(chatJson).sort()) === JSON.stringify(['model', 'reply']),
+      'Chat response contract is strictly { reply, model }'
+    );
+    assert(chatJson.model === GEMINI_MODEL, 'Chat response identifies GEMINI_MODEL (gemini-3.8-flash)');
+    assert(chatJson.reply === 'Grounded mentorship guidance.', 'Chat reply matches candidate text');
+
+    // Verify chat production request construction sent to Google Gemini
+    assert(
+      lastGeminiRequest?.url ===
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
+      'Chat calls stable gemini-3.8-flash:generateContent endpoint'
+    );
+    assert(lastGeminiRequest?.method === 'POST', 'Chat HTTP method is POST');
+    assert(
+      lastGeminiRequest?.headers?.['Content-Type'] === 'application/json',
+      'Chat Content-Type is application/json'
+    );
+    assert(
+      lastGeminiRequest?.headers?.['x-goog-api-key'] === 'mock-gemini-key',
+      'Chat passes x-goog-api-key header'
+    );
+    assert(
+      Boolean(lastGeminiRequest?.body?.systemInstruction?.parts?.[0]?.text),
+      'Chat includes populated systemInstruction'
+    );
+    assert(
+      Array.isArray(lastGeminiRequest?.body?.contents) && lastGeminiRequest.body.contents.length === 3,
+      'Chat contents includes 2 history turns and 1 current user message'
+    );
+    assert(
+      lastGeminiRequest?.body?.generationConfig?.temperature === 0.7,
+      'Chat generationConfig temperature is 0.7'
+    );
+    assert(
+      lastGeminiRequest?.body?.generationConfig?.maxOutputTokens === 1024,
+      'Chat generationConfig maxOutputTokens is 1024'
+    );
+
+    // 12b. Structured Project-Draft Mode
+    lastGeminiRequest = null;
+    geminiResponseMock = {
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                text: JSON.stringify({
+                  title: 'Embedded Vision Verification',
+                  description: 'A formal verification pipeline for lightweight vision models on edge microcontrollers.',
+                  tags: ['Embedded-Vision', 'Formal-Methods', 'Microcontrollers'],
+                }),
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const draftRes = await handleRequest(
+      createRequest({
+        mode: 'project_draft',
+        prompt: 'Build a formal verification pipeline for vision models on microcontrollers',
+      })
+    );
+
+    assert(draftRes.status === 200, 'Project draft request returns HTTP 200');
+    const draftJson = await draftRes.json();
+
+    // Verify project draft response contract
+    assert(
+      JSON.stringify(Object.keys(draftJson).sort()) === JSON.stringify(['draft', 'model']),
+      'Project draft response contract is strictly { draft, model }'
+    );
+    assert(
+      JSON.stringify(Object.keys(draftJson.draft).sort()) === JSON.stringify(['description', 'tags', 'title']),
+      'Project draft object strictly contains { title, description, tags }'
+    );
+    assert(draftJson.model === GEMINI_MODEL, 'Project draft identifies GEMINI_MODEL (gemini-3.8-flash)');
+    assert(draftJson.draft.title === 'Embedded Vision Verification', 'Draft title matches');
+    assert(
+      draftJson.draft.description ===
+        'A formal verification pipeline for lightweight vision models on edge microcontrollers.',
+      'Draft description matches'
+    );
+    assert(
+      JSON.stringify(draftJson.draft.tags) ===
+        JSON.stringify(['embedded-vision', 'formal-methods', 'microcontrollers']),
+      'Draft tags are correctly sanitized and normalized'
+    );
+
+    // Verify project-draft production request construction sent to Google Gemini
+    assert(
+      lastGeminiRequest?.url ===
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
+      'Draft calls stable gemini-3.8-flash:generateContent endpoint'
+    );
+    assert(lastGeminiRequest?.method === 'POST', 'Draft HTTP method is POST');
+    assert(
+      lastGeminiRequest?.headers?.['Content-Type'] === 'application/json',
+      'Draft Content-Type is application/json'
+    );
+    assert(
+      lastGeminiRequest?.headers?.['x-goog-api-key'] === 'mock-gemini-key',
+      'Draft passes x-goog-api-key header'
+    );
+    assert(
+      Boolean(lastGeminiRequest?.body?.systemInstruction?.parts?.[0]?.text),
+      'Draft includes structured draft systemInstruction'
+    );
+    assert(
+      lastGeminiRequest?.body?.contents?.[0]?.parts?.[0]?.text ===
+        'Build a formal verification pipeline for vision models on microcontrollers',
+      'Draft contents contains user prompt'
+    );
+    assert(
+      lastGeminiRequest?.body?.generationConfig?.responseMimeType === 'application/json',
+      'Draft generationConfig enforces responseMimeType: "application/json"'
+    );
+    assert(
+      lastGeminiRequest?.body?.generationConfig?.temperature === 0.7,
+      'Draft generationConfig temperature is 0.7'
+    );
+    assert(
+      lastGeminiRequest?.body?.generationConfig?.maxOutputTokens === 1024,
+      'Draft generationConfig maxOutputTokens is 1024'
+    );
   });
 
 } finally {

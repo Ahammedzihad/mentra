@@ -1,5 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
+export const GEMINI_MODEL = 'gemini-3.8-flash';
+const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
 const ALLOWED_ORIGINS = [
   'https://mentra-eta.vercel.app',
   'http://localhost:5173',
@@ -162,7 +165,7 @@ CRITICAL INSTRUCTIONS:
 - Never output an empty title or description.
 - Never invent visibility, user, or status fields.`;
 
-  const geminiEndpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
+  const geminiEndpoint = GEMINI_ENDPOINT;
 
   const geminiPayload = {
     systemInstruction: {
@@ -291,7 +294,7 @@ CRITICAL INSTRUCTIONS:
         description: draftDescription,
         tags: draftTags,
       },
-      model: 'gemini-3.6-flash',
+      model: GEMINI_MODEL,
     }),
     { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
   );
@@ -313,7 +316,7 @@ export async function handleRequest(req: Request): Promise<Response> {
         function: 'personal-ai',
         status: 'active',
         configured: isConfigured,
-        model: 'gemini-3.6-flash',
+        model: GEMINI_MODEL,
         message: isConfigured
           ? 'Personal AI Edge Function is active and configured.'
           : 'GEMINI_API_KEY secret is not configured in Supabase Edge Function environment.',
@@ -711,8 +714,8 @@ GUIDANCE PRINCIPLES:
     }
     contents.push({ role: 'user', parts: [{ text: message.trim() }] });
 
-    // 11. Call Google Gemini API (Gemini 3.6 Flash)
-    const geminiEndpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
+    // 11. Call Google Gemini API (Gemini 3.8 Flash)
+    const geminiEndpoint = GEMINI_ENDPOINT;
 
     const geminiPayload = {
       systemInstruction: {
@@ -769,7 +772,7 @@ GUIDANCE PRINCIPLES:
         return new Response(
           JSON.stringify({
             reply: fallbackReply,
-            model: 'gemini-3.6-flash',
+            model: GEMINI_MODEL,
           }),
           { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -802,7 +805,7 @@ GUIDANCE PRINCIPLES:
     return new Response(
       JSON.stringify({
         reply: replyText.trim(),
-        model: 'gemini-3.6-flash',
+        model: GEMINI_MODEL,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

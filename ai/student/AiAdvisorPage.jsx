@@ -377,7 +377,7 @@ export const AiAdvisorPage = () => {
                     backgroundColor: '#2E7D32'
                   }}
                 />
-                <span>Mentra Personal AI (Supabase Edge Function · Gemini 1.5 Flash)</span>
+                <span>Mentra Personal AI (Supabase Edge Function · Gemini 3.8 Flash)</span>
               </div>
 
               {messages.length > 1 && (
