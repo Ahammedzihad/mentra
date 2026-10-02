@@ -18,7 +18,9 @@ import {
   RotateCcw,
   CheckCircle2,
   Info,
-  Download
+  Download,
+  Award,
+  Trophy
 } from 'lucide-react';
 import { generateResumePdf } from './generateResumePdf';
 
@@ -30,6 +32,39 @@ function safeHydrateDraft(content, profile) {
   if (!content || typeof content !== 'object') {
     return {
       summary: profile?.bio || '',
+      skills: Array.isArray(profile?.skills)
+        ? profile.skills.map((s, idx) => {
+            const name = typeof s === 'string' ? s : (s?.name || s?.title || `Skill ${idx + 1}`);
+            return {
+              id: `skill-${idx}`,
+              sourceId: `profile-skill-${idx}`,
+              sourceType: 'skill',
+              name,
+              title: name,
+              included: true,
+              originalName: name,
+              originalTitle: name
+            };
+          })
+        : [],
+      achievements: Array.isArray(profile?.achievements)
+        ? profile.achievements.map((a, idx) => {
+            const title = typeof a === 'string' ? a : (a?.title || a?.name || `Achievement ${idx + 1}`);
+            return {
+              id: `ach-${idx}`,
+              sourceId: `profile-ach-${idx}`,
+              sourceType: 'achievement',
+              title,
+              name: title,
+              description: '',
+              date: '',
+              included: true,
+              originalTitle: title,
+              originalName: title,
+              originalDescription: ''
+            };
+          })
+        : [],
       projects: [],
       journey: []
     };
@@ -42,6 +77,51 @@ function safeHydrateDraft(content, profile) {
         (profile?.department
           ? `Collegiate scholar in ${profile.department} focused on academic excellence, hands-on project work, and interdisciplinary collaboration.`
           : 'Collegiate scholar focused on academic excellence, hands-on project work, and interdisciplinary collaboration.'));
+
+  // Skills hydration:
+  // If content.skills is an array (even empty []), preserve saved choices!
+  // If content.skills is undefined (older draft saved before this feature), fall back to profile?.skills.
+  const rawSkills = Array.isArray(content.skills)
+    ? content.skills
+    : (Array.isArray(profile?.skills) ? profile.skills : []);
+  const skills = rawSkills.map((s, idx) => {
+    const name = typeof s === 'string' ? s : (s?.name || s?.title || `Skill ${idx + 1}`);
+    const originalName = typeof s === 'string' ? s : (s?.originalName || s?.originalTitle || name);
+    return {
+      id: s?.id || `skill-hydrated-${idx}`,
+      sourceId: s?.sourceId || `profile-skill-${idx}`,
+      sourceType: 'skill',
+      name,
+      title: name,
+      included: typeof s?.included === 'boolean' ? s.included : true,
+      originalName,
+      originalTitle: originalName
+    };
+  });
+
+  // Achievements hydration:
+  // If content.achievements is an array (even empty []), preserve saved choices!
+  // If content.achievements is undefined (older draft saved before this feature), fall back to profile?.achievements.
+  const rawAchievements = Array.isArray(content.achievements)
+    ? content.achievements
+    : (Array.isArray(profile?.achievements) ? profile.achievements : []);
+  const achievements = rawAchievements.map((a, idx) => {
+    const title = typeof a === 'string' ? a : (a?.title || a?.name || `Achievement ${idx + 1}`);
+    const originalTitle = typeof a === 'string' ? a : (a?.originalTitle || a?.originalName || title);
+    return {
+      id: a?.id || `ach-hydrated-${idx}`,
+      sourceId: a?.sourceId || `profile-ach-${idx}`,
+      sourceType: 'achievement',
+      title,
+      name: title,
+      description: typeof a?.description === 'string' ? a.description : '',
+      date: typeof a?.date === 'string' ? a.date : '',
+      included: typeof a?.included === 'boolean' ? a.included : true,
+      originalTitle,
+      originalName: originalTitle,
+      originalDescription: typeof a?.originalDescription === 'string' ? a.originalDescription : (a?.description || '')
+    };
+  });
 
   const rawProjects = Array.isArray(content.projects) ? content.projects : [];
   const projects = rawProjects.map((p, idx) => ({
@@ -84,6 +164,8 @@ function safeHydrateDraft(content, profile) {
 
   return {
     summary: rawSummary,
+    skills,
+    achievements,
     projects,
     journey
   };
@@ -92,9 +174,11 @@ function safeHydrateDraft(content, profile) {
 export const ResumeBuilderPage = () => {
   const { user, profile } = useAuth();
 
-  // In-memory draft state (hydrated from saved draft OR auto-populated from Journey and Projects)
+  // In-memory draft state (hydrated from saved draft OR auto-populated from Profile, Journey and Projects)
   const [draft, setDraft] = useState({
     summary: '',
+    skills: [],
+    achievements: [],
     projects: [],
     journey: []
   });
@@ -114,6 +198,8 @@ export const ResumeBuilderPage = () => {
   const [pdfError, setPdfError] = useState(null);
 
   // Active inline edit states for individual entries
+  const [editingSkillId, setEditingSkillId] = useState(null);
+  const [editingAchievementId, setEditingAchievementId] = useState(null);
   const [editingProjectId, setEditingProjectId] = useState(null);
   const [editingJourneyId, setEditingJourneyId] = useState(null);
 
@@ -134,7 +220,23 @@ export const ResumeBuilderPage = () => {
     setSaveError(null);
 
     try {
-      // 1. Check for existing saved draft row for the authenticated user
+      // 1. Fetch user's profile to obtain authentic Skills & Achievements and verify schema presence
+      const { data: profileRow, error: profileFetchError } = await supabase
+        .from('profiles')
+        .select('id, full_name, department, course, program, specialization, year, batch, bio, skills, achievements')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (profileFetchError) {
+        console.error('Error fetching profile records:', profileFetchError);
+        setLoadError(profileFetchError.message || 'Unable to load profile skills and achievements.');
+        setLoading(false);
+        return;
+      }
+
+      const activeProfile = profileRow || profile;
+
+      // 2. Check for existing saved draft row for the authenticated user
       const { data: savedDraftRow, error: draftFetchError } = await supabase
         .from('resume_drafts')
         .select('id, user_id, content, updated_at')
@@ -151,8 +253,8 @@ export const ResumeBuilderPage = () => {
       }
 
       if (savedDraftRow && savedDraftRow.content) {
-        // Hydrate from existing saved draft
-        const hydrated = safeHydrateDraft(savedDraftRow.content, profile);
+        // Hydrate from existing saved draft - saved choices are preserved
+        const hydrated = safeHydrateDraft(savedDraftRow.content, activeProfile);
         setDraft(hydrated);
         setIsSavedDraft(true);
         setLastSavedAt(savedDraftRow.updated_at);
@@ -160,7 +262,7 @@ export const ResumeBuilderPage = () => {
         return;
       }
 
-      // 2. No saved draft exists -> Auto-populate from authentic Journey & Projects
+      // 3. No saved draft exists -> Auto-populate from authentic Profile, Journey & Projects
       const [projRes, journeyRes] = await Promise.all([
         supabase
           .from('projects')
@@ -180,12 +282,38 @@ export const ResumeBuilderPage = () => {
       const rawProjects = projRes.data || [];
       const rawJourney = journeyRes.data || [];
 
+      const rawSkills = Array.isArray(activeProfile?.skills) ? activeProfile.skills : [];
+      const rawAchievements = Array.isArray(activeProfile?.achievements) ? activeProfile.achievements : [];
+
       setDraft({
         summary:
-          profile?.bio ||
-          (profile?.department
-            ? `Collegiate scholar in ${profile.department} focused on academic excellence, hands-on project work, and interdisciplinary collaboration.`
+          activeProfile?.bio ||
+          (activeProfile?.department
+            ? `Collegiate scholar in ${activeProfile.department} focused on academic excellence, hands-on project work, and interdisciplinary collaboration.`
             : 'Collegiate scholar focused on academic excellence, hands-on project work, and interdisciplinary collaboration.'),
+        skills: rawSkills.map((s, idx) => ({
+          id: `skill-${idx}`,
+          sourceId: `profile-skill-${idx}`,
+          sourceType: 'skill',
+          name: typeof s === 'string' ? s : (s?.name || `Skill ${idx + 1}`),
+          title: typeof s === 'string' ? s : (s?.name || `Skill ${idx + 1}`),
+          included: true,
+          originalName: typeof s === 'string' ? s : (s?.name || `Skill ${idx + 1}`),
+          originalTitle: typeof s === 'string' ? s : (s?.name || `Skill ${idx + 1}`)
+        })),
+        achievements: rawAchievements.map((a, idx) => ({
+          id: `ach-${idx}`,
+          sourceId: `profile-ach-${idx}`,
+          sourceType: 'achievement',
+          title: typeof a === 'string' ? a : (a?.title || `Achievement ${idx + 1}`),
+          name: typeof a === 'string' ? a : (a?.title || `Achievement ${idx + 1}`),
+          description: '',
+          date: '',
+          included: true,
+          originalTitle: typeof a === 'string' ? a : (a?.title || `Achievement ${idx + 1}`),
+          originalName: typeof a === 'string' ? a : (a?.title || `Achievement ${idx + 1}`),
+          originalDescription: ''
+        })),
         projects: rawProjects.map((p) => ({
           id: p.id,
           sourceId: p.id,
@@ -249,6 +377,31 @@ export const ResumeBuilderPage = () => {
       // Structure content preserving item order, inclusion, inline edits, and summary
       const contentPayload = {
         summary: draft.summary,
+        skills: draft.skills.map((s, idx) => ({
+          id: s.id,
+          sourceId: s.sourceId,
+          sourceType: 'skill',
+          name: s.name,
+          title: s.title || s.name,
+          included: s.included,
+          order: idx,
+          originalName: s.originalName,
+          originalTitle: s.originalTitle || s.originalName
+        })),
+        achievements: draft.achievements.map((a, idx) => ({
+          id: a.id,
+          sourceId: a.sourceId,
+          sourceType: 'achievement',
+          title: a.title,
+          name: a.name || a.title,
+          description: a.description,
+          date: a.date,
+          included: a.included,
+          order: idx,
+          originalTitle: a.originalTitle,
+          originalName: a.originalName || a.originalTitle,
+          originalDescription: a.originalDescription
+        })),
         projects: draft.projects.map((p, idx) => ({
           id: p.id,
           sourceId: p.sourceId,
@@ -431,7 +584,112 @@ export const ResumeBuilderPage = () => {
     }));
   };
 
+  // Skills: Inclusion toggle
+  const toggleSkillInclusion = (id) => {
+    setDraft((prev) => ({
+      ...prev,
+      skills: prev.skills.map((s) =>
+        s.id === id ? { ...s, included: !s.included } : s
+      )
+    }));
+  };
+
+  // Skills: Reorder
+  const moveSkill = (index, direction) => {
+    setDraft((prev) => {
+      const list = [...prev.skills];
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= list.length) return prev;
+      const temp = list[index];
+      list[index] = list[targetIndex];
+      list[targetIndex] = temp;
+      return { ...prev, skills: list };
+    });
+  };
+
+  // Skills: Inline text editing
+  const updateSkillField = (id, field, value) => {
+    setDraft((prev) => ({
+      ...prev,
+      skills: prev.skills.map((s) => {
+        if (s.id !== id) return s;
+        const updated = { ...s, [field]: value };
+        if (field === 'name') updated.title = value;
+        if (field === 'title') updated.name = value;
+        return updated;
+      })
+    }));
+  };
+
+  // Skills: Reset to original text
+  const resetSkillText = (id) => {
+    setDraft((prev) => ({
+      ...prev,
+      skills: prev.skills.map((s) =>
+        s.id === id
+          ? { ...s, name: s.originalName, title: s.originalTitle }
+          : s
+      )
+    }));
+  };
+
+  // Achievements: Inclusion toggle
+  const toggleAchievementInclusion = (id) => {
+    setDraft((prev) => ({
+      ...prev,
+      achievements: prev.achievements.map((a) =>
+        a.id === id ? { ...a, included: !a.included } : a
+      )
+    }));
+  };
+
+  // Achievements: Reorder
+  const moveAchievement = (index, direction) => {
+    setDraft((prev) => {
+      const list = [...prev.achievements];
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= list.length) return prev;
+      const temp = list[index];
+      list[index] = list[targetIndex];
+      list[targetIndex] = temp;
+      return { ...prev, achievements: list };
+    });
+  };
+
+  // Achievements: Inline text editing
+  const updateAchievementField = (id, field, value) => {
+    setDraft((prev) => ({
+      ...prev,
+      achievements: prev.achievements.map((a) => {
+        if (a.id !== id) return a;
+        const updated = { ...a, [field]: value };
+        if (field === 'title') updated.name = value;
+        if (field === 'name') updated.title = value;
+        return updated;
+      })
+    }));
+  };
+
+  // Achievements: Reset to original text
+  const resetAchievementText = (id) => {
+    setDraft((prev) => ({
+      ...prev,
+      achievements: prev.achievements.map((a) =>
+        a.id === id
+          ? {
+              ...a,
+              title: a.originalTitle,
+              name: a.originalTitle,
+              description: a.originalDescription
+            }
+          : a
+      )
+    }));
+  };
+
   // Computed views for live preview
+  const includedSkills = draft.skills.filter((s) => s.included);
+  const includedAchievements = draft.achievements.filter((a) => a.included);
   const includedProjects = draft.projects.filter((p) => p.included);
   const includedJourney = draft.journey.filter((j) => j.included);
 
@@ -751,7 +1009,288 @@ export const ResumeBuilderPage = () => {
               </div>
             </section>
 
-            {/* Section 2: Projects Section */}
+            {/* Section 2: Technical & Academic Skills */}
+            <section
+              className="card-academic"
+              aria-labelledby="section-skills-heading"
+              style={{ padding: '1.75rem' }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Award size={18} style={{ color: 'var(--color-terracotta)' }} />
+                  <h2 id="section-skills-heading" style={{ fontSize: '1.25rem', margin: 0 }}>
+                    2. Technical & Academic Skills
+                  </h2>
+                  <span className="badge-dept" style={{ fontSize: '0.68rem', padding: '0.1rem 0.4rem' }}>
+                    Self-Reported
+                  </span>
+                </div>
+                <span
+                  style={{
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    color: 'var(--color-terracotta)',
+                    backgroundColor: 'var(--color-terracotta-subtle)',
+                    padding: '0.2rem 0.5rem',
+                    borderRadius: 'var(--radius-sm)'
+                  }}
+                >
+                  {includedSkills.length} of {draft.skills.length} included
+                </span>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 0, marginBottom: '1rem' }}>
+                Auto-populated from your self-reported profile skills. Edits, reordering, and inclusion choices exist solely in this resume draft.
+              </p>
+
+              {draft.skills.length === 0 ? (
+                <div
+                  style={{
+                    textAlign: 'center',
+                    padding: '2rem 1rem',
+                    backgroundColor: 'var(--color-warm-ivory-light)',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px dashed var(--border-strong)'
+                  }}
+                >
+                  <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                    No self-reported skills found on your collegiate profile.
+                  </p>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Add skills via Edit Profile in the navigation bar to include them on your resume.
+                  </span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {draft.skills.map((skill, idx) => {
+                    const isEditing = editingSkillId === skill.id;
+                    const hasModifications = skill.name !== skill.originalName;
+
+                    return (
+                      <article
+                        key={skill.id}
+                        data-testid={`skill-entry-${skill.id}`}
+                        style={{
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: 'var(--radius-sm)',
+                          padding: '0.9rem 1.15rem',
+                          backgroundColor: skill.included ? 'var(--color-white)' : '#F9F8F6',
+                          opacity: skill.included ? 1 : 0.65,
+                          transition: 'var(--transition-smooth)'
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            gap: '0.75rem'
+                          }}
+                        >
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <h3
+                                style={{
+                                  fontSize: '0.95rem',
+                                  margin: 0,
+                                  color: skill.included ? 'var(--text-primary)' : 'var(--text-muted)'
+                                }}
+                              >
+                                {skill.name}
+                              </h3>
+                              <span className="badge-dept" style={{ fontSize: '0.65rem', padding: '0.1rem 0.35rem' }}>
+                                Skill
+                              </span>
+                              {hasModifications && (
+                                <span
+                                  style={{
+                                    fontSize: '0.68rem',
+                                    color: 'var(--color-terracotta)',
+                                    backgroundColor: 'var(--color-terracotta-subtle)',
+                                    padding: '0.1rem 0.35rem',
+                                    borderRadius: 'var(--radius-sm)'
+                                  }}
+                                  title="Text edited for resume draft only"
+                                >
+                                  Edited
+                                </span>
+                              )}
+                              {!skill.included && (
+                                <span
+                                  style={{
+                                    fontSize: '0.68rem',
+                                    color: 'var(--text-muted)',
+                                    backgroundColor: '#EAE6E1',
+                                    padding: '0.1rem 0.35rem',
+                                    borderRadius: 'var(--radius-sm)'
+                                  }}
+                                >
+                                  Excluded
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Controls Row */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            {/* Reorder Up */}
+                            <button
+                              type="button"
+                              onClick={() => moveSkill(idx, 'up')}
+                              disabled={idx === 0}
+                              aria-label={`Move skill "${skill.name}" up in resume`}
+                              title="Move up"
+                              style={{
+                                background: 'none',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-sm)',
+                                width: '28px',
+                                height: '28px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: idx === 0 ? 'not-allowed' : 'pointer',
+                                color: idx === 0 ? 'var(--text-muted)' : 'var(--text-primary)',
+                                opacity: idx === 0 ? 0.35 : 1
+                              }}
+                            >
+                              <ArrowUp size={13} />
+                            </button>
+
+                            {/* Reorder Down */}
+                            <button
+                              type="button"
+                              onClick={() => moveSkill(idx, 'down')}
+                              disabled={idx === draft.skills.length - 1}
+                              aria-label={`Move skill "${skill.name}" down in resume`}
+                              title="Move down"
+                              style={{
+                                background: 'none',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-sm)',
+                                width: '28px',
+                                height: '28px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: idx === draft.skills.length - 1 ? 'not-allowed' : 'pointer',
+                                color: idx === draft.skills.length - 1 ? 'var(--text-muted)' : 'var(--text-primary)',
+                                opacity: idx === draft.skills.length - 1 ? 0.35 : 1
+                              }}
+                            >
+                              <ArrowDown size={13} />
+                            </button>
+
+                            {/* Edit Inline Toggle */}
+                            <button
+                              type="button"
+                              onClick={() => setEditingSkillId(isEditing ? null : skill.id)}
+                              aria-label={isEditing ? `Done editing skill "${skill.name}"` : `Edit text for skill "${skill.name}"`}
+                              title={isEditing ? 'Done editing' : 'Edit text inline'}
+                              style={{
+                                background: isEditing ? 'var(--color-primary-dark)' : 'var(--color-warm-ivory)',
+                                color: isEditing ? 'var(--color-white)' : 'var(--text-primary)',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-sm)',
+                                padding: '0 0.5rem',
+                                height: '28px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                fontSize: '0.75rem',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <Edit3 size={12} />
+                              <span>{isEditing ? 'Done' : 'Edit'}</span>
+                            </button>
+
+                            {/* Include / Exclude Toggle Switch */}
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={skill.included}
+                              onClick={() => toggleSkillInclusion(skill.id)}
+                              aria-label={`${skill.included ? 'Exclude' : 'Include'} skill "${skill.name}" in resume`}
+                              title={skill.included ? 'Exclude from resume' : 'Include in resume'}
+                              style={{
+                                backgroundColor: skill.included ? '#2E5A36' : 'var(--color-warm-ivory)',
+                                color: skill.included ? 'var(--color-white)' : 'var(--text-muted)',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-sm)',
+                                padding: '0 0.55rem',
+                                height: '28px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.3rem',
+                                fontSize: '0.75rem',
+                                fontWeight: 500,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {skill.included ? <Eye size={12} /> : <EyeOff size={12} />}
+                              <span>{skill.included ? 'Included' : 'Hidden'}</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Inline Edit Form */}
+                        {isEditing && (
+                          <div
+                            style={{
+                              backgroundColor: 'var(--color-warm-ivory-light)',
+                              padding: '0.85rem',
+                              borderRadius: 'var(--radius-sm)',
+                              border: '1px solid var(--border-subtle)',
+                              marginTop: '0.65rem'
+                            }}
+                          >
+                            <div style={{ marginBottom: '0.5rem' }}>
+                              <label
+                                htmlFor={`skill-name-${skill.id}`}
+                                style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.25rem' }}
+                              >
+                                Resume Skill Label
+                              </label>
+                              <input
+                                id={`skill-name-${skill.id}`}
+                                type="text"
+                                value={skill.name}
+                                onChange={(e) => updateSkillField(skill.id, 'name', e.target.value)}
+                                style={{
+                                  width: '100%',
+                                  padding: '0.45rem 0.65rem',
+                                  fontSize: '0.85rem',
+                                  borderRadius: 'var(--radius-sm)',
+                                  border: '1px solid var(--border-subtle)'
+                                }}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                Source profile skill in database remains untouched.
+                              </span>
+                              {hasModifications && (
+                                <button
+                                  type="button"
+                                  onClick={() => resetSkillText(skill.id)}
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                                >
+                                  <RotateCcw size={11} />
+                                  <span>Revert to Source Text</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            {/* Section 3: Projects Section */}
             <section
               className="card-academic"
               aria-labelledby="section-projects-heading"
@@ -761,7 +1300,7 @@ export const ResumeBuilderPage = () => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <Briefcase size={18} style={{ color: 'var(--color-terracotta)' }} />
                   <h2 id="section-projects-heading" style={{ fontSize: '1.25rem', margin: 0 }}>
-                    2. Portfolio Projects
+                    3. Portfolio Projects
                   </h2>
                 </div>
                 <span
@@ -1085,7 +1624,7 @@ export const ResumeBuilderPage = () => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <Compass size={18} style={{ color: 'var(--color-terracotta)' }} />
                   <h2 id="section-journey-heading" style={{ fontSize: '1.25rem', margin: 0 }}>
-                    3. Journey Milestones
+                    4. Journey Milestones
                   </h2>
                 </div>
                 <span
@@ -1389,6 +1928,318 @@ export const ResumeBuilderPage = () => {
                 </div>
               )}
             </section>
+
+            {/* Section 5: Honors & Achievements */}
+            <section
+              className="card-academic"
+              aria-labelledby="section-achievements-heading"
+              style={{ padding: '1.75rem' }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Trophy size={18} style={{ color: 'var(--color-terracotta)' }} />
+                  <h2 id="section-achievements-heading" style={{ fontSize: '1.25rem', margin: 0 }}>
+                    5. Honors & Achievements
+                  </h2>
+                  <span className="badge-dept" style={{ fontSize: '0.68rem', padding: '0.1rem 0.4rem' }}>
+                    Self-Reported
+                  </span>
+                </div>
+                <span
+                  style={{
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    color: 'var(--color-terracotta)',
+                    backgroundColor: 'var(--color-terracotta-subtle)',
+                    padding: '0.2rem 0.5rem',
+                    borderRadius: 'var(--radius-sm)'
+                  }}
+                >
+                  {includedAchievements.length} of {draft.achievements.length} included
+                </span>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 0, marginBottom: '1rem' }}>
+                Auto-populated from your self-reported profile achievements. Edits, reordering, and inclusion choices exist solely in this resume draft.
+              </p>
+
+              {draft.achievements.length === 0 ? (
+                <div
+                  style={{
+                    textAlign: 'center',
+                    padding: '2rem 1rem',
+                    backgroundColor: 'var(--color-warm-ivory-light)',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px dashed var(--border-strong)'
+                  }}
+                >
+                  <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                    No self-reported achievements found on your collegiate profile.
+                  </p>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Add achievements via Edit Profile in the navigation bar to include them on your resume.
+                  </span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {draft.achievements.map((ach, idx) => {
+                    const isEditing = editingAchievementId === ach.id;
+                    const hasModifications =
+                      ach.title !== ach.originalTitle ||
+                      ach.description !== ach.originalDescription;
+
+                    return (
+                      <article
+                        key={ach.id}
+                        data-testid={`achievement-entry-${ach.id}`}
+                        style={{
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: 'var(--radius-sm)',
+                          padding: '0.9rem 1.15rem',
+                          backgroundColor: ach.included ? 'var(--color-white)' : '#F9F8F6',
+                          opacity: ach.included ? 1 : 0.65,
+                          transition: 'var(--transition-smooth)'
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'flex-start',
+                            gap: '0.75rem',
+                            marginBottom: ach.description || isEditing ? '0.5rem' : 0
+                          }}
+                        >
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <h3
+                                style={{
+                                  fontSize: '0.95rem',
+                                  margin: 0,
+                                  color: ach.included ? 'var(--text-primary)' : 'var(--text-muted)'
+                                }}
+                              >
+                                {ach.title}
+                              </h3>
+                              <span className="badge-dept terracotta" style={{ fontSize: '0.65rem', padding: '0.1rem 0.35rem' }}>
+                                Achievement
+                              </span>
+                              {hasModifications && (
+                                <span
+                                  style={{
+                                    fontSize: '0.68rem',
+                                    color: 'var(--color-terracotta)',
+                                    backgroundColor: 'var(--color-terracotta-subtle)',
+                                    padding: '0.1rem 0.35rem',
+                                    borderRadius: 'var(--radius-sm)'
+                                  }}
+                                  title="Text edited for resume draft only"
+                                >
+                                  Edited
+                                </span>
+                              )}
+                              {!ach.included && (
+                                <span
+                                  style={{
+                                    fontSize: '0.68rem',
+                                    color: 'var(--text-muted)',
+                                    backgroundColor: '#EAE6E1',
+                                    padding: '0.1rem 0.35rem',
+                                    borderRadius: 'var(--radius-sm)'
+                                  }}
+                                >
+                                  Excluded
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Controls Row */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            {/* Reorder Up */}
+                            <button
+                              type="button"
+                              onClick={() => moveAchievement(idx, 'up')}
+                              disabled={idx === 0}
+                              aria-label={`Move achievement "${ach.title}" up in resume`}
+                              title="Move up"
+                              style={{
+                                background: 'none',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-sm)',
+                                width: '28px',
+                                height: '28px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: idx === 0 ? 'not-allowed' : 'pointer',
+                                color: idx === 0 ? 'var(--text-muted)' : 'var(--text-primary)',
+                                opacity: idx === 0 ? 0.35 : 1
+                              }}
+                            >
+                              <ArrowUp size={13} />
+                            </button>
+
+                            {/* Reorder Down */}
+                            <button
+                              type="button"
+                              onClick={() => moveAchievement(idx, 'down')}
+                              disabled={idx === draft.achievements.length - 1}
+                              aria-label={`Move achievement "${ach.title}" down in resume`}
+                              title="Move down"
+                              style={{
+                                background: 'none',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-sm)',
+                                width: '28px',
+                                height: '28px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: idx === draft.achievements.length - 1 ? 'not-allowed' : 'pointer',
+                                color: idx === draft.achievements.length - 1 ? 'var(--text-muted)' : 'var(--text-primary)',
+                                opacity: idx === draft.achievements.length - 1 ? 0.35 : 1
+                              }}
+                            >
+                              <ArrowDown size={13} />
+                            </button>
+
+                            {/* Edit Inline Toggle */}
+                            <button
+                              type="button"
+                              onClick={() => setEditingAchievementId(isEditing ? null : ach.id)}
+                              aria-label={isEditing ? `Done editing achievement "${ach.title}"` : `Edit text for achievement "${ach.title}"`}
+                              title={isEditing ? 'Done editing' : 'Edit text inline'}
+                              style={{
+                                background: isEditing ? 'var(--color-primary-dark)' : 'var(--color-warm-ivory)',
+                                color: isEditing ? 'var(--color-white)' : 'var(--text-primary)',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-sm)',
+                                padding: '0 0.5rem',
+                                height: '28px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                fontSize: '0.75rem',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <Edit3 size={12} />
+                              <span>{isEditing ? 'Done' : 'Edit'}</span>
+                            </button>
+
+                            {/* Include / Exclude Toggle Switch */}
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={ach.included}
+                              onClick={() => toggleAchievementInclusion(ach.id)}
+                              aria-label={`${ach.included ? 'Exclude' : 'Include'} achievement "${ach.title}" in resume`}
+                              title={ach.included ? 'Exclude from resume' : 'Include in resume'}
+                              style={{
+                                backgroundColor: ach.included ? '#2E5A36' : 'var(--color-warm-ivory)',
+                                color: ach.included ? 'var(--color-white)' : 'var(--text-muted)',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 'var(--radius-sm)',
+                                padding: '0 0.55rem',
+                                height: '28px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.3rem',
+                                fontSize: '0.75rem',
+                                fontWeight: 500,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {ach.included ? <Eye size={12} /> : <EyeOff size={12} />}
+                              <span>{ach.included ? 'Included' : 'Hidden'}</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Inline Edit Form */}
+                        {isEditing ? (
+                          <div
+                            style={{
+                              backgroundColor: 'var(--color-warm-ivory-light)',
+                              padding: '0.85rem',
+                              borderRadius: 'var(--radius-sm)',
+                              border: '1px solid var(--border-subtle)',
+                              marginTop: '0.5rem'
+                            }}
+                          >
+                            <div style={{ marginBottom: '0.5rem' }}>
+                              <label
+                                htmlFor={`ach-title-${ach.id}`}
+                                style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.25rem' }}
+                              >
+                                Resume Achievement Title
+                              </label>
+                              <input
+                                id={`ach-title-${ach.id}`}
+                                type="text"
+                                value={ach.title}
+                                onChange={(e) => updateAchievementField(ach.id, 'title', e.target.value)}
+                                style={{
+                                  width: '100%',
+                                  padding: '0.45rem 0.65rem',
+                                  fontSize: '0.85rem',
+                                  borderRadius: 'var(--radius-sm)',
+                                  border: '1px solid var(--border-subtle)'
+                                }}
+                              />
+                            </div>
+                            <div style={{ marginBottom: '0.5rem' }}>
+                              <label
+                                htmlFor={`ach-desc-${ach.id}`}
+                                style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.25rem' }}
+                              >
+                                Detail / Context (Optional)
+                              </label>
+                              <textarea
+                                id={`ach-desc-${ach.id}`}
+                                value={ach.description}
+                                onChange={(e) => updateAchievementField(ach.id, 'description', e.target.value)}
+                                rows={2}
+                                style={{
+                                  width: '100%',
+                                  padding: '0.45rem 0.65rem',
+                                  fontSize: '0.85rem',
+                                  borderRadius: 'var(--radius-sm)',
+                                  border: '1px solid var(--border-subtle)',
+                                  resize: 'vertical'
+                                }}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                Source profile achievement in database remains untouched.
+                              </span>
+                              {hasModifications && (
+                                <button
+                                  type="button"
+                                  onClick={() => resetAchievementText(ach.id)}
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                                >
+                                  <RotateCcw size={11} />
+                                  <span>Revert to Source Text</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          ach.description && (
+                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0, marginTop: '0.35rem' }}>
+                              {ach.description}
+                            </p>
+                          )
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
           </div>
 
           {/* ============================================================== */}
@@ -1460,6 +2311,64 @@ export const ResumeBuilderPage = () => {
                   </p>
                 </div>
               )}
+
+              {/* Technical & Academic Skills Preview Block */}
+              <div style={{ marginBottom: '1.5rem' }}>
+                <h3
+                  style={{
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    color: 'var(--color-terracotta)',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    paddingBottom: '0.25rem',
+                    marginBottom: '0.75rem',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}
+                >
+                  <span>Technical & Academic Skills</span>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 500, color: 'var(--text-muted)' }}>
+                    {includedSkills.length} included
+                  </span>
+                </h3>
+
+                {includedSkills.length === 0 ? (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                    No skills selected for this draft. Toggle entries on the left to include them.
+                  </p>
+                ) : (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '0.45rem',
+                      alignItems: 'center'
+                    }}
+                    data-testid="preview-skills-list"
+                  >
+                    {includedSkills.map((sk) => (
+                      <span
+                        key={sk.id}
+                        data-testid={`preview-skill-${sk.id}`}
+                        style={{
+                          fontSize: '0.8rem',
+                          backgroundColor: 'var(--color-warm-ivory-light)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: 'var(--radius-sm)',
+                          padding: '0.2rem 0.55rem',
+                          fontWeight: 500
+                        }}
+                      >
+                        {sk.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* Projects Preview Block */}
               <div style={{ marginBottom: '1.5rem' }}>
@@ -1560,6 +2469,58 @@ export const ResumeBuilderPage = () => {
                         <p style={{ fontSize: '0.825rem', color: 'var(--text-secondary)', lineHeight: 1.45, marginTop: '0.2rem', marginBottom: 0 }}>
                           {j.description}
                         </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Honors & Achievements Preview Block */}
+              <div style={{ marginTop: '1.5rem' }}>
+                <h3
+                  style={{
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    color: 'var(--color-terracotta)',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    paddingBottom: '0.25rem',
+                    marginBottom: '0.75rem',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}
+                >
+                  <span>Honors & Achievements</span>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 500, color: 'var(--text-muted)' }}>
+                    {includedAchievements.length} included
+                  </span>
+                </h3>
+
+                {includedAchievements.length === 0 ? (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                    No achievements selected for this draft. Toggle entries on the left to include them.
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }} data-testid="preview-achievements-list">
+                    {includedAchievements.map((ach) => (
+                      <div key={ach.id} data-testid={`preview-achievement-${ach.id}`}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                          <h4 style={{ fontSize: '0.95rem', fontWeight: 600, margin: 0, color: 'var(--text-primary)' }}>
+                            &bull; {ach.title}
+                          </h4>
+                          {ach.date && (
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                              {ach.date}
+                            </span>
+                          )}
+                        </div>
+                        {ach.description && (
+                          <p style={{ fontSize: '0.825rem', color: 'var(--text-secondary)', lineHeight: 1.45, marginTop: '0.2rem', marginBottom: 0, paddingLeft: '0.85rem' }}>
+                            {ach.description}
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>

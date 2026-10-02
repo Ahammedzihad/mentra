@@ -73,6 +73,8 @@ const mockStudentProfile = {
   year: '3',
   batch: '2027',
   bio: 'Passionate about machine learning architectures and decentralized distributed systems.',
+  skills: ['TypeScript', 'Python', 'PyTorch'],
+  achievements: ["Dean's Honor Roll 2026", 'HackMIT 2nd Place Winner'],
   is_verified: false,
 };
 
@@ -242,6 +244,8 @@ async function runTests() {
       savedHeaders: null,
       mutations: [],
       projectOrJourneyMutations: [],
+      sourceRecordMutations: [],
+      profilesRequested: false,
     };
 
     page.route('**/rest/v1/**', async (route) => {
@@ -321,14 +325,16 @@ async function runTests() {
       // Track any mutation attempts
       if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
         interceptedQueries.mutations.push({ method, url });
-        if (url.includes('/rest/v1/projects') || url.includes('/rest/v1/journey')) {
+        if (url.includes('/rest/v1/projects') || url.includes('/rest/v1/journey') || url.includes('/rest/v1/profiles')) {
           interceptedQueries.projectOrJourneyMutations.push({ method, url });
+          interceptedQueries.sourceRecordMutations.push({ method, url });
         }
         return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
       }
 
       // Profiles endpoint
       if (url.includes('/rest/v1/profiles')) {
+        interceptedQueries.profilesRequested = true;
         if (url.includes('role=eq.mentor')) {
           return route.fulfill({
             status: 200,
@@ -336,7 +342,22 @@ async function runTests() {
             body: JSON.stringify([]),
           });
         }
-        const profile = role === 'student' ? mockStudentProfile : mockMentorProfile;
+        if (options.profileFetchError) {
+          interceptedQueries.profileRequestCount = (interceptedQueries.profileRequestCount || 0) + 1;
+          // Fail when ResumeBuilderPage queries profiles (which does not include 'role')
+          // or on subsequent requests after initial auth
+          if (interceptedQueries.profileRequestCount > 1 || !url.includes('role')) {
+            return route.fulfill({
+              status: 500,
+              contentType: 'application/json',
+              body: JSON.stringify({
+                code: '42703',
+                message: 'column "skills" does not exist in public.profiles',
+              }),
+            });
+          }
+        }
+        const profile = options.profile || (role === 'student' ? mockStudentProfile : mockMentorProfile);
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -1104,6 +1125,506 @@ async function runTests() {
       runAssertion('PDF contains Page 1 of N footer', pdfBytes.includes(`Page 1 of ${totalPages}`));
       runAssertion(`PDF contains Page ${totalPages} of ${totalPages} footer`, pdfBytes.includes(`Page ${totalPages} of ${totalPages}`));
       runAssertion('PDF contains student name in footer', pdfBytes.includes('Aria Montgomery') && pdfBytes.includes('Mentra Collegiate Resume'));
+    });
+
+    // TEST 23: Regression: Project descriptions with non-breaking hyphens (U+2011) and Unicode dashes render with normal character spacing and zero margin overflow
+    await test('Regression: Project descriptions with non-breaking hyphens (U+2011) render with normal character spacing without right margin overflow', async () => {
+      // 1. Unit verification on buildResumePdfDoc with exact text pattern
+      const unicodeHyphenText = 'The Sonnet project develops a lightweight web\u2011based chatbot that allows users to type natural\u2011language questions and receive clear, conversational answers. The system combines a simple front\u2011end interface built with HTML, CSS, and JavaScript with a back\u2011end API that processes input using a pre\u2011trained language model or rule\u2011based engine. Core functionalities include real\u2011time message handling, context\u2011aware response generation, and basic error handling. The goal is to demonstrate end\u2011to\u2011end integration of web technologies and conversational AI, providing a reusable template for educational and prototype deployments.';
+
+      const testDraft = {
+        summary: 'Scholar focused on conversational systems.',
+        projects: [
+          {
+            id: 'proj-sonnet',
+            title: 'Sonnet Web Chatbot',
+            description: unicodeHyphenText,
+            tags: ['web chatbot', 'conversational ai'],
+            date: 'Oct 2026',
+            included: true,
+          }
+        ],
+        journey: []
+      };
+
+      const { doc } = buildResumePdfDoc({
+        draft: testDraft,
+        profile: mockStudentProfile,
+        user: { email: 'aria@mentra.edu' },
+      });
+
+      const pdfRaw = Buffer.from(doc.output('arraybuffer')).toString('latin1');
+
+      // Regression checks:
+      // (a) Must NOT contain any null bytes \u0000 (which indicated UTF-16 BE dual-byte character spacing)
+      runAssertion('Generated PDF has zero null bytes in stream', !pdfRaw.includes('\u0000'));
+
+      // (b) Must NOT contain spaced-out character sequence '( T h e' or '( w e b'
+      runAssertion('PDF does not contain spaced-out characters "( T h e"', !pdfRaw.includes('( T h e'));
+      runAssertion('PDF does not contain spaced-out characters "( w e b"', !pdfRaw.includes('( w e b'));
+
+      // (c) Must contain normal text with standard ASCII hyphens
+      runAssertion('PDF contains normal text with standard hyphens', pdfRaw.includes('The Sonnet project develops a lightweight web-based chatbot'));
+
+      // (d) Verify each line in project description wraps strictly within content width (505.28 pt)
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const contentWidth = pageWidth - 45 * 2; // 505.28 pt
+      const textLines = doc.splitTextToSize(unicodeHyphenText.replace(/\u2011/g, '-'), contentWidth);
+      for (const line of textLines) {
+        const lineWidth = doc.getTextWidth(line);
+        runAssertion(`Line width (${lineWidth.toFixed(2)}pt) wraps within margin limit (${contentWidth.toFixed(2)}pt)`, lineWidth <= contentWidth + 0.01);
+      }
+
+      // 2. Playwright in-browser download verification with live editor
+      const page = await browser.newPage();
+      setupPageMocks(page, testStudentId, 'student');
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('#download-pdf-button');
+
+      // Edit Project 1 description with non-breaking hyphens
+      const editBtn = page.locator('[data-testid="project-entry-proj-001"] button:has-text("Edit")');
+      await editBtn.click();
+      await page.locator('#proj-desc-proj-001').fill(unicodeHyphenText);
+
+      // Trigger download
+      const downloadPromise = page.waitForEvent('download');
+      await page.locator('#download-pdf-button').click();
+      const download = await downloadPromise;
+
+      const stream = await download.createReadStream();
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const downloadedPdfText = Buffer.concat(chunks).toString('latin1');
+
+      runAssertion('Downloaded PDF from browser has zero null bytes', !downloadedPdfText.includes('\u0000'));
+      runAssertion('Downloaded PDF does not have space-separated characters "( T h e"', !downloadedPdfText.includes('( T h e'));
+      runAssertion('Downloaded PDF preserves normal word spacing', downloadedPdfText.includes('The Sonnet project develops a lightweight web-based chatbot'));
+
+      await page.close();
+    });
+
+    // TEST 24: Profile skills & achievements auto-populate into editor and live preview when no saved draft exists
+    await test('Profile skills and achievements auto-populate into editor and preview when no saved draft exists', async () => {
+      const page = await browser.newPage();
+      setupPageMocks(page, testStudentId, 'student');
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('[data-testid="skill-entry-skill-0"]');
+
+      // Check Skills in Left Column Editor
+      const skill0 = page.locator('[data-testid="skill-entry-skill-0"]');
+      const skill1 = page.locator('[data-testid="skill-entry-skill-1"]');
+      const skill2 = page.locator('[data-testid="skill-entry-skill-2"]');
+      runAssertion('Skill 1 (TypeScript) rendered in editor', (await skill0.innerText()).includes('TypeScript'));
+      runAssertion('Skill 2 (Python) rendered in editor', (await skill1.innerText()).includes('Python'));
+      runAssertion('Skill 3 (PyTorch) rendered in editor', (await skill2.innerText()).includes('PyTorch'));
+
+      // Check Achievements in Left Column Editor
+      const ach0 = page.locator('[data-testid="achievement-entry-ach-0"]');
+      const ach1 = page.locator('[data-testid="achievement-entry-ach-1"]');
+      runAssertion("Achievement 1 (Dean's Honor Roll) rendered in editor", (await ach0.innerText()).includes("Dean's Honor Roll 2026"));
+      runAssertion('Achievement 2 (HackMIT) rendered in editor', (await ach1.innerText()).includes('HackMIT 2nd Place Winner'));
+
+      // Check Right Column Live Preview
+      const previewSkills = page.locator('[data-testid="preview-skills-list"]');
+      const previewAchievements = page.locator('[data-testid="preview-achievements-list"]');
+      runAssertion('Preview has skills section', (await previewSkills.count()) > 0);
+      runAssertion('Preview has achievements section', (await previewAchievements.count()) > 0);
+
+      const previewSkill0 = page.locator('[data-testid="preview-skill-skill-0"]');
+      const previewSkill1 = page.locator('[data-testid="preview-skill-skill-1"]');
+      runAssertion('Preview skill 1 displays TypeScript', (await previewSkill0.innerText()).includes('TypeScript'));
+      runAssertion('Preview skill 2 displays Python', (await previewSkill1.innerText()).includes('Python'));
+
+      const previewAch0 = page.locator('[data-testid="preview-achievement-ach-0"]');
+      const previewAch1 = page.locator('[data-testid="preview-achievement-ach-1"]');
+      runAssertion("Preview achievement 1 displays Dean's Honor Roll", (await previewAch0.innerText()).includes("Dean's Honor Roll 2026"));
+      runAssertion('Preview achievement 2 displays HackMIT', (await previewAch1.innerText()).includes('HackMIT 2nd Place Winner'));
+
+      await page.close();
+    });
+
+    // TEST 25: Skills & achievements inclusion toggles omit and restore items in live preview
+    await test('Skills and achievements inclusion toggles omit and restore items in live preview', async () => {
+      const page = await browser.newPage();
+      setupPageMocks(page, testStudentId, 'student');
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('[data-testid="preview-skill-skill-0"]');
+
+      // 1. Toggle off skill 0 (TypeScript)
+      const toggleSkillBtn = page.locator('[data-testid="skill-entry-skill-0"] button[role="switch"]');
+      await toggleSkillBtn.click();
+
+      // Check skill 0 omitted from preview, but skill 1 (Python) remains
+      runAssertion('Skill 0 omitted from preview after exclusion', (await page.locator('[data-testid="preview-skill-skill-0"]').count()) === 0);
+      runAssertion('Skill 1 still visible in preview', (await page.locator('[data-testid="preview-skill-skill-1"]').count()) > 0);
+
+      // Re-include skill 0
+      await toggleSkillBtn.click();
+      runAssertion('Skill 0 restored to preview after re-inclusion', (await page.locator('[data-testid="preview-skill-skill-0"]').count()) > 0);
+
+      // 2. Toggle off achievement 0
+      const toggleAchBtn = page.locator('[data-testid="achievement-entry-ach-0"] button[role="switch"]');
+      await toggleAchBtn.click();
+
+      // Check achievement 0 omitted from preview, but achievement 1 remains
+      runAssertion('Achievement 0 omitted from preview after exclusion', (await page.locator('[data-testid="preview-achievement-ach-0"]').count()) === 0);
+      runAssertion('Achievement 1 still visible in preview', (await page.locator('[data-testid="preview-achievement-ach-1"]').count()) > 0);
+
+      // Re-include achievement 0
+      await toggleAchBtn.click();
+      runAssertion('Achievement 0 restored to preview after re-inclusion', (await page.locator('[data-testid="preview-achievement-ach-0"]').count()) > 0);
+
+      await page.close();
+    });
+
+    // TEST 26: Skills & achievements reordering controls move items up and down in editor and preview
+    await test('Skills and achievements reordering controls move items up and down in editor and preview', async () => {
+      const page = await browser.newPage();
+      setupPageMocks(page, testStudentId, 'student');
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('[data-testid="preview-skill-skill-0"]');
+
+      // Verify skill 0 Move Up button is disabled at top boundary
+      const topSkillMoveUp = page.locator('[data-testid="skill-entry-skill-0"] button[title="Move up"]');
+      runAssertion('Top skill Move Up button is disabled', await topSkillMoveUp.isDisabled());
+
+      // Move skill 0 (TypeScript) Down
+      const topSkillMoveDown = page.locator('[data-testid="skill-entry-skill-0"] button[title="Move down"]');
+      await topSkillMoveDown.click();
+
+      // In preview, first skill badge should now be Python, second should be TypeScript
+      const previewSkills = page.locator('[data-testid="preview-skills-list"] > span');
+      const firstSkillText = await previewSkills.nth(0).innerText();
+      const secondSkillText = await previewSkills.nth(1).innerText();
+      runAssertion('Python is now first skill in preview', firstSkillText.includes('Python'));
+      runAssertion('TypeScript is now second skill in preview', secondSkillText.includes('TypeScript'));
+
+      // Move achievement 1 Up
+      const secondAchMoveUp = page.locator('[data-testid="achievement-entry-ach-1"] button[title="Move up"]');
+      await secondAchMoveUp.click();
+
+      const previewAchievements = page.locator('[data-testid="preview-achievements-list"] > div');
+      const firstAchText = await previewAchievements.nth(0).innerText();
+      runAssertion('HackMIT is now first achievement in preview', firstAchText.includes('HackMIT 2nd Place Winner'));
+
+      await page.close();
+    });
+
+    // TEST 27: Inline editing & revert for skills and achievements modifies in-memory draft with zero writes to source records
+    await test('Inline editing and revert for skills and achievements modifies draft in-memory with zero source mutations', async () => {
+      const page = await browser.newPage();
+      const mocks = setupPageMocks(page, testStudentId, 'student');
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('[data-testid="skill-entry-skill-0"]');
+
+      // 1. Edit Skill 0 inline
+      const editSkillBtn = page.locator('[data-testid="skill-entry-skill-0"] button:has-text("Edit")');
+      await editSkillBtn.click();
+
+      const skillInput = page.locator('#skill-name-skill-0');
+      await skillInput.fill('TypeScript / WebAssembly (Draft Custom)');
+
+      // Check preview reflects edited skill name immediately
+      const previewSkill0 = page.locator('[data-testid="preview-skill-skill-0"]');
+      runAssertion('Preview reflects edited skill text', (await previewSkill0.innerText()).includes('TypeScript / WebAssembly (Draft Custom)'));
+
+      // Click Revert button for skill
+      const revertSkillBtn = page.locator('[data-testid="skill-entry-skill-0"] button:has-text("Revert")');
+      await revertSkillBtn.click();
+      runAssertion('Skill text reverted back to original profile value', (await previewSkill0.innerText()).includes('TypeScript'));
+
+      // 2. Edit Achievement 0 inline
+      const editAchBtn = page.locator('[data-testid="achievement-entry-ach-0"] button:has-text("Edit")');
+      await editAchBtn.click();
+
+      await page.locator('#ach-title-ach-0').fill("Dean's Honor Roll 2026 (Summa Cum Laude)");
+      await page.locator('#ach-desc-ach-0').fill('Ranked in the 99th percentile across collegiate engineering.');
+
+      const previewAch0 = page.locator('[data-testid="preview-achievement-ach-0"]');
+      const previewAch0Text = await previewAch0.innerText();
+      runAssertion('Preview reflects edited achievement title', previewAch0Text.includes("Dean's Honor Roll 2026 (Summa Cum Laude)"));
+      runAssertion('Preview reflects edited achievement description', previewAch0Text.includes('Ranked in the 99th percentile'));
+
+      // Click Revert button for achievement
+      const revertAchBtn = page.locator('[data-testid="achievement-entry-ach-0"] button:has-text("Revert")');
+      await revertAchBtn.click();
+      runAssertion('Achievement title reverted back to original', (await previewAch0.innerText()).includes("Dean's Honor Roll 2026"));
+
+      // Check zero writes to database
+      runAssertion('Zero source record mutations occurred', mocks.sourceRecordMutations.length === 0);
+      runAssertion('Zero database mutations occurred overall', mocks.mutations.length === 0);
+
+      await page.close();
+    });
+
+    // TEST 28: Saved draft preserves skills & achievements layout, custom texts, and inclusion choices without being overwritten by profile values
+    await test('Saved draft preserves skills and achievements layout and inclusion choices without being overwritten by profile values', async () => {
+      const page = await browser.newPage();
+      const mockSavedDraftWithSkills = {
+        id: 'saved-draft-skills-achievements',
+        user_id: testStudentId,
+        content: {
+          summary: 'Researcher in formal verification and systems security.',
+          skills: [
+            {
+              id: 'skill-saved-0',
+              name: 'Rust Systems Programming (Saved Custom)',
+              originalName: 'Rust',
+              included: true,
+              order: 0
+            },
+            {
+              id: 'skill-saved-1',
+              name: 'Go Concurrency (Saved Excluded)',
+              originalName: 'Go',
+              included: false,
+              order: 1
+            }
+          ],
+          achievements: [
+            {
+              id: 'ach-saved-0',
+              title: 'USENIX Best Paper Award (Saved Custom)',
+              originalTitle: 'USENIX Paper',
+              description: 'Awarded for breakthrough in asynchronous consensus.',
+              originalDescription: 'Asynchronous consensus paper',
+              date: 'Aug 2026',
+              included: true,
+              order: 0
+            }
+          ],
+          projects: mockSavedDraft.content.projects,
+          journey: mockSavedDraft.content.journey,
+          version: 1,
+          savedAt: '2026-09-28T12:00:00Z'
+        },
+        updated_at: '2026-09-28T12:00:00Z'
+      };
+
+      // Profile has completely different skills and achievements
+      const differentProfile = {
+        ...mockStudentProfile,
+        skills: ['C++', 'Java', 'SQL'],
+        achievements: ['High School Valedictorian']
+      };
+
+      const mocks = setupPageMocks(page, testStudentId, 'student', {
+        savedDraft: mockSavedDraftWithSkills,
+        profile: differentProfile
+      });
+
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('[data-testid="resume-preview-document"]');
+
+      // Verify draft source badge indicates "Saved Draft"
+      const statusBadge = page.locator('header span:has-text("Saved Draft"), div:has-text("Saved Draft")').first();
+      runAssertion('Status badge indicates Saved Draft', (await statusBadge.count()) > 0);
+
+      // Verify saved custom skill is rendered in preview
+      const previewSkillsList = page.locator('[data-testid="preview-skills-list"]');
+      const skillsText = await previewSkillsList.innerText();
+      runAssertion('Preview contains saved custom skill', skillsText.includes('Rust Systems Programming (Saved Custom)'));
+
+      // Verify excluded saved skill is omitted from preview
+      runAssertion('Excluded saved skill is NOT in preview', !skillsText.includes('Go Concurrency (Saved Excluded)'));
+
+      // Verify profile skills (C++, Java, SQL) did NOT overwrite the saved draft choices
+      runAssertion('Profile skill C++ did NOT overwrite saved draft', !skillsText.includes('C++'));
+      runAssertion('Profile skill Java did NOT overwrite saved draft', !skillsText.includes('Java'));
+
+      // Verify saved custom achievement is rendered in preview
+      const previewAchievementsList = page.locator('[data-testid="preview-achievements-list"]');
+      const achievementsText = await previewAchievementsList.innerText();
+      runAssertion('Preview contains saved custom achievement', achievementsText.includes('USENIX Best Paper Award (Saved Custom)'));
+      runAssertion('Preview contains saved achievement description', achievementsText.includes('breakthrough in asynchronous consensus'));
+      runAssertion('Profile achievement did NOT overwrite saved draft', !achievementsText.includes('High School Valedictorian'));
+
+      // Test Saving Draft retains skills and achievements in payload
+      const saveBtn = page.locator('#save-draft-button');
+      await saveBtn.click();
+      await page.waitForSelector('[data-testid="save-success-banner"]');
+
+      runAssertion('Draft save occurred', mocks.draftSaved);
+      runAssertion('Saved payload contains content.skills array', Array.isArray(mocks.savedPayload?.content?.skills));
+      runAssertion('Saved payload contains content.achievements array', Array.isArray(mocks.savedPayload?.content?.achievements));
+      runAssertion('Saved skills in payload preserves custom text', mocks.savedPayload.content.skills[0].name.includes('Rust Systems Programming (Saved Custom)'));
+      runAssertion('Zero source mutations occurred during save', mocks.sourceRecordMutations.length === 0);
+
+      await page.close();
+    });
+
+    // TEST 29: Resume PDF download reflects in-memory skills and achievements including unsaved edits and omitting excluded items
+    await test('Resume PDF download reflects in-memory skills and achievements (including unsaved edits, omitting excluded items)', async () => {
+      // 1. Direct unit verification of buildResumePdfDoc
+      const testDraftWithSkillsAndAchievements = {
+        summary: 'Scholar in distributed algorithms and machine learning.',
+        skills: [
+          { id: 's-1', name: 'Distributed Systems', included: true },
+          { id: 's-2', name: 'Deep Learning', included: true },
+          { id: 's-3', name: 'Legacy Fortran', included: false } // Excluded!
+        ],
+        projects: [
+          { id: 'p-1', title: 'Edge Cluster Orchestration', description: 'Real-time load balancer for IoT nodes.', date: 'Oct 2026', included: true }
+        ],
+        journey: [],
+        achievements: [
+          { id: 'a-1', title: 'Outstanding Undergraduate Researcher Award', description: 'Awarded by Department of Computer Science.', date: 'May 2026', included: true },
+          { id: 'a-2', title: 'High School Debate Finalist', description: 'Regional competition.', date: '2023', included: false } // Excluded!
+        ]
+      };
+
+      const { doc } = buildResumePdfDoc({
+        draft: testDraftWithSkillsAndAchievements,
+        profile: mockStudentProfile,
+        user: { email: 'aria@mentra.edu' }
+      });
+
+      const pdfRaw = Buffer.from(doc.output('arraybuffer')).toString('latin1');
+
+      runAssertion('PDF includes Technical & Academic Skills header', pdfRaw.toUpperCase().includes('TECHNICAL & ACADEMIC SKILLS'));
+      runAssertion('PDF includes included skill Distributed Systems', pdfRaw.includes('Distributed Systems'));
+      runAssertion('PDF includes included skill Deep Learning', pdfRaw.includes('Deep Learning'));
+      runAssertion('PDF omits excluded skill Legacy Fortran', !pdfRaw.includes('Legacy Fortran'));
+
+      runAssertion('PDF includes Honors & Achievements header', pdfRaw.toUpperCase().includes('HONORS & ACHIEVEMENTS'));
+      runAssertion('PDF includes included achievement title', pdfRaw.includes('Outstanding Undergraduate Researcher Award'));
+      runAssertion('PDF includes included achievement description', pdfRaw.includes('Awarded by Department of Computer Science.'));
+      runAssertion('PDF omits excluded achievement', !pdfRaw.includes('High School Debate Finalist'));
+
+      // 2. Playwright in-browser download verification
+      const page = await browser.newPage();
+      const mocks = setupPageMocks(page, testStudentId, 'student');
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('#download-pdf-button');
+
+      // Edit Skill 0 inline without saving
+      const editSkillBtn = page.locator('[data-testid="skill-entry-skill-0"] button:has-text("Edit")');
+      await editSkillBtn.click();
+      await page.locator('#skill-name-skill-0').fill('TypeScript and Distributed Protocols Unsaved Skill Edit');
+
+      // Exclude Skill 2 (PyTorch)
+      const toggleSkill2 = page.locator('[data-testid="skill-entry-skill-2"] button[role="switch"]');
+      await toggleSkill2.click();
+
+      // Trigger download
+      const downloadPromise = page.waitForEvent('download');
+      await page.locator('#download-pdf-button').click();
+      const download = await downloadPromise;
+
+      const stream = await download.createReadStream();
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const downloadedPdfText = Buffer.concat(chunks).toString('latin1');
+
+      runAssertion('Downloaded PDF contains unsaved edited skill', downloadedPdfText.includes('TypeScript and Distributed Protocols Unsaved Skill Edit'));
+      runAssertion('Downloaded PDF omits excluded skill PyTorch', !downloadedPdfText.includes('PyTorch'));
+      runAssertion('Zero draft saves occurred during download', !mocks.draftSaved);
+      runAssertion('Zero source mutations occurred during download', mocks.sourceRecordMutations.length === 0);
+
+      await page.close();
+    });
+
+    // TEST 30: Profile schema absence or loading failure displays error banner, disables saving, and protects saved drafts
+    await test('Profile schema absence or profile loading failure displays error banner, disables save, and preserves saved draft', async () => {
+      const page = await browser.newPage();
+      const mockSavedDraftData = {
+        id: 'protected-saved-draft-001',
+        user_id: testStudentId,
+        content: {
+          summary: 'Precious saved resume draft that must never be overwritten.',
+          skills: [{ id: 's-1', name: 'C++', included: true }],
+          achievements: [],
+          projects: [],
+          journey: [],
+          version: 1
+        },
+        updated_at: '2026-09-30T10:00:00Z'
+      };
+
+      const mocks = setupPageMocks(page, testStudentId, 'student', {
+        profileFetchError: true, // Simulates column "skills" does not exist or profile error
+        savedDraft: mockSavedDraftData
+      });
+
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('[data-testid="load-error-banner"]');
+
+      // Verify clear load error banner is displayed
+      const errorBanner = page.locator('[data-testid="load-error-banner"]');
+      const errorText = await errorBanner.innerText();
+      runAssertion('Load error banner is displayed', (await errorBanner.count()) > 0);
+      runAssertion('Error text mentions profile loading failure', errorText.includes('profile') || errorText.includes('skills'));
+
+      // Verify Save Draft button is disabled to protect against overwriting
+      const saveBtn = page.locator('#save-draft-button');
+      runAssertion('Save Draft button is disabled during profile load failure', await saveBtn.isDisabled());
+
+      // Verify Download PDF button is disabled during load error
+      const downloadBtn = page.locator('#download-pdf-button');
+      runAssertion('Download PDF button is disabled during load error', await downloadBtn.isDisabled());
+
+      // Verify zero save attempts and zero mutations occurred
+      runAssertion('Zero draft save attempts were made', mocks.saveAttempts === 0);
+      runAssertion('Zero source record mutations occurred', mocks.sourceRecordMutations.length === 0);
+      runAssertion('Zero database mutations occurred overall', mocks.mutations.length === 0);
+
+      await page.close();
     });
 
   } finally {

@@ -23,11 +23,37 @@ import { jsPDF } from 'jspdf';
 export function sanitizePdfText(str) {
   if (typeof str !== 'string') return '';
   return str
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201C\u201D]/g, '"')
-    .replace(/[\u2013\u2014]/g, '-')
+    // Normalize hyphen and dash variants (including non-breaking hyphen U+2011, figure dash, en/em-dash) to standard hyphen
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    .replace(/\u00AD/g, '') // soft hyphen
+    // Normalize single quotes / apostrophes to standard ASCII apostrophe
+    .replace(/[\u2018\u2019\u201A\u201B\u2032\u0060\u00B4]/g, "'")
+    // Normalize double quotes to standard ASCII double quote
+    .replace(/[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB]/g, '"')
+    // Normalize ellipsis to three dots
     .replace(/\u2026/g, '...')
+    // Normalize non-standard bullet characters to standard bullet
+    .replace(/[\u2023\u25E6\u2043\u2219]/g, '•')
+    // Normalize non-standard whitespace (non-breaking spaces, em/en space, thin space) to standard space
+    .replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, ' ')
+    // Remove invisible zero-width characters
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    // Replace common arrows and mathematical symbols with ASCII equivalents
+    .replace(/\u2192/g, '->')
+    .replace(/\u2190/g, '<-')
+    .replace(/\u2265/g, '>=')
+    .replace(/\u2264/g, '<=')
+    .replace(/\u2260/g, '!=')
+    .replace(/\u00B1/g, '+/-')
+    // Normalize tabs and carriage returns to space
     .replace(/[\r\t]/g, ' ')
+    // Decompose any remaining unmapped Unicode characters (> 255) to prevent jsPDF from falling back
+    // to UTF-16 BE with null-byte spacing in standard 8-bit WinAnsi fonts
+    .replace(/[^\x00-\xFF]/g, (char) => {
+      if (char === '•') return char; // Supported by jsPDF WinAnsiEncoding (code 149)
+      const decomposed = char.normalize('NFKD').replace(/[^\x00-\x7F]/g, '');
+      return decomposed || ' ';
+    })
     .trim();
 }
 
@@ -173,7 +199,30 @@ export function buildResumePdfDoc({ draft, profile, user }) {
   }
 
   // =========================================================================
-  // 3. Featured Portfolio Projects (Included Only, in Current Editor Order)
+  // 3. Technical & Academic Skills (Included Only, in Current Editor Order)
+  // =========================================================================
+  const rawSkills = Array.isArray(draft?.skills) ? draft.skills : [];
+  const includedSkills = rawSkills.filter((s) => s && s.included !== false);
+
+  if (includedSkills.length > 0) {
+    renderSectionHeader('Technical & Academic Skills');
+    const skillsList = includedSkills
+      .map((s) => sanitizePdfText(s.name || s.title))
+      .filter(Boolean)
+      .join('  •  ');
+
+    renderParagraph(skillsList, {
+      font: 'helvetica',
+      style: 'normal',
+      size: 9.5,
+      lineHeight: 13.5,
+      color: [51, 65, 85],
+    });
+    currentY += 6;
+  }
+
+  // =========================================================================
+  // 4. Featured Portfolio Projects (Included Only, in Current Editor Order)
   // =========================================================================
   const rawProjects = Array.isArray(draft?.projects) ? draft.projects : [];
   const includedProjects = rawProjects.filter((p) => p && p.included !== false);
@@ -329,7 +378,78 @@ export function buildResumePdfDoc({ draft, profile, user }) {
   }
 
   // =========================================================================
-  // 5. Running Page Footers Across All Pages
+  // 6. Honors & Achievements (Included Only, in Current Editor Order)
+  // =========================================================================
+  const rawAchievements = Array.isArray(draft?.achievements) ? draft.achievements : [];
+  const includedAchievements = rawAchievements.filter((a) => a && a.included !== false);
+
+  if (includedAchievements.length > 0) {
+    renderSectionHeader('Honors & Achievements');
+
+    includedAchievements.forEach((ach, idx) => {
+      ensureSpace(24);
+
+      const title = sanitizePdfText(ach.title || ach.name);
+      const date = sanitizePdfText(ach.date);
+
+      if (title) {
+        doc.setFont('times', 'bold');
+        doc.setFontSize(10.5);
+        doc.setTextColor(30, 41, 59);
+
+        if (date) {
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8.5);
+          const dateWidth = doc.getTextWidth(date);
+          doc.setTextColor(100, 116, 139);
+          doc.text(date, marginLeft + contentWidth - dateWidth, currentY);
+
+          doc.setFont('times', 'bold');
+          doc.setFontSize(10.5);
+          doc.setTextColor(30, 41, 59);
+          const maxTitleWidth = contentWidth - dateWidth - 10;
+          const titleLines = doc.splitTextToSize(`•  ${title}`, maxTitleWidth);
+          doc.text(titleLines[0], marginLeft, currentY);
+          if (titleLines.length > 1) {
+            for (let i = 1; i < titleLines.length; i++) {
+              currentY += 12;
+              ensureSpace(12);
+              doc.text(titleLines[i], marginLeft + 10, currentY);
+            }
+          }
+        } else {
+          const titleLines = doc.splitTextToSize(`•  ${title}`, contentWidth);
+          doc.text(titleLines[0], marginLeft, currentY);
+          if (titleLines.length > 1) {
+            for (let i = 1; i < titleLines.length; i++) {
+              currentY += 12;
+              ensureSpace(12);
+              doc.text(titleLines[i], marginLeft + 10, currentY);
+            }
+          }
+        }
+        currentY += 12;
+      }
+
+      if (ach.description) {
+        renderParagraph(ach.description, {
+          font: 'helvetica',
+          style: 'normal',
+          size: 9,
+          lineHeight: 12.5,
+          color: [71, 85, 105],
+        });
+      }
+
+      if (idx < includedAchievements.length - 1) {
+        currentY += 5;
+      }
+    });
+    currentY += 6;
+  }
+
+  // =========================================================================
+  // 7. Running Page Footers Across All Pages
   // =========================================================================
   const totalPages = doc.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
