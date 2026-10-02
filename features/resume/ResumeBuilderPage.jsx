@@ -17,8 +17,10 @@ import {
   FolderPlus,
   RotateCcw,
   CheckCircle2,
-  Info
+  Info,
+  Download
 } from 'lucide-react';
+import { generateResumePdf } from './generateResumePdf';
 
 /**
  * Safely parses and normalizes saved draft content from public.resume_drafts.content.
@@ -106,6 +108,10 @@ export const ResumeBuilderPage = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState(null);
+
+  // PDF download operation state
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState(null);
 
   // Active inline edit states for individual entries
   const [editingProjectId, setEditingProjectId] = useState(null);
@@ -302,6 +308,32 @@ export const ResumeBuilderPage = () => {
     }
   };
 
+  /**
+   * Generates and downloads a formatted PDF from current in-memory editor state.
+   * Zero database reads or writes (does not modify resume_drafts, projects, or journey).
+   * Works whether the draft has been saved or remains unsaved.
+   */
+  const handleDownloadPdf = () => {
+    if (loading || Boolean(loadError) || isGeneratingPdf) return;
+
+    setIsGeneratingPdf(true);
+    setPdfError(null);
+
+    try {
+      generateResumePdf({
+        draft,
+        profile,
+        user,
+        download: true
+      });
+    } catch (err) {
+      console.error('Error generating resume PDF:', err);
+      setPdfError(err.message || 'Unable to generate PDF document. Please check your browser settings.');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
   // --- In-Memory State Mutators (Zero writes to projects or journey tables) ---
 
   const handleSummaryChange = (e) => {
@@ -477,8 +509,30 @@ export const ResumeBuilderPage = () => {
             </p>
           </div>
 
-          {/* Action Button: Save Draft */}
+          {/* Action Buttons: Download PDF & Save Draft */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button
+              id="download-pdf-button"
+              data-testid="download-pdf-button"
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={loading || Boolean(loadError) || isGeneratingPdf}
+              className="btn btn-secondary"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                minWidth: '145px',
+                justifyContent: 'center',
+                cursor: (loading || Boolean(loadError) || isGeneratingPdf) ? 'not-allowed' : 'pointer',
+                opacity: (loading || Boolean(loadError) || isGeneratingPdf) ? 0.65 : 1
+              }}
+              aria-label={isGeneratingPdf ? 'Generating resume PDF...' : 'Download formatted resume as PDF'}
+            >
+              <Download size={14} />
+              <span>{isGeneratingPdf ? 'Generating PDF...' : 'Download PDF'}</span>
+            </button>
+
             <button
               id="save-draft-button"
               data-testid="save-draft-button"
@@ -578,6 +632,30 @@ export const ResumeBuilderPage = () => {
           >
             <AlertCircle size={16} style={{ color: '#C5221F', flexShrink: 0 }} />
             <span>{saveError}</span>
+          </div>
+        )}
+
+        {/* PDF Error Banner */}
+        {pdfError && (
+          <div
+            className="notice-box error"
+            style={{
+              marginBottom: '2rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              backgroundColor: '#FCE8E6',
+              border: '1px solid #FAD2CF',
+              color: '#C5221F',
+              padding: '0.75rem 1rem',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '0.875rem'
+            }}
+            role="alert"
+            data-testid="pdf-error-banner"
+          >
+            <AlertCircle size={16} style={{ color: '#C5221F', flexShrink: 0 }} />
+            <span>{pdfError}</span>
           </div>
         )}
 
@@ -1489,7 +1567,7 @@ export const ResumeBuilderPage = () => {
               </div>
             </div>
 
-            {/* Step 7 Persistence Active & Step 8 Notice */}
+            {/* Step 8 PDF Export Active Notice */}
             <div
               style={{
                 marginTop: '1rem',
@@ -1506,9 +1584,20 @@ export const ResumeBuilderPage = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 <Info size={14} style={{ color: 'var(--color-terracotta)', flexShrink: 0 }} />
                 <span>
-                  Draft persistence active (saved to <code>resume_drafts</code>). PDF export (Step 8) is the upcoming step.
+                  PDF download generates directly from your in-memory editor state (saved or unsaved) with zero database mutations.
                 </span>
               </div>
+              <button
+                type="button"
+                onClick={handleDownloadPdf}
+                disabled={loading || Boolean(loadError) || isGeneratingPdf}
+                className="btn btn-secondary btn-sm"
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}
+                aria-label="Export resume as PDF"
+              >
+                <Download size={12} />
+                <span>Export PDF</span>
+              </button>
             </div>
           </div>
         </div>

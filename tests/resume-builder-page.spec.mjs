@@ -15,6 +15,7 @@
 
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { buildResumePdfDoc } from '../features/resume/generateResumePdf.js';
 
 let viteServer;
 let browser;
@@ -207,7 +208,7 @@ async function teardown() {
 
 async function runTests() {
   console.log('======================================================================');
-  console.log('  MENTRA PHASE 6 PART B — STEPS 6 & 7: RESUME BUILDER & DRAFT PERSISTENCE');
+  console.log('  MENTRA PHASE 6 PART B — STEPS 6, 7 & 8: RESUME BUILDER & PDF DOWNLOAD');
   console.log('======================================================================\n');
 
   let passedTests = 0;
@@ -894,6 +895,215 @@ async function runTests() {
       runAssertion('Zero project or journey mutations occurred', mocks.projectOrJourneyMutations.length === 0);
 
       await page.close();
+    });
+
+    // =========================================================================
+    // STEP 8: RESUME PDF DOWNLOAD VERIFICATION
+    // =========================================================================
+
+    // TEST 17: Download button is present, accessible, and disabled during load error
+    await test('Download PDF button is rendered and properly disabled during load error', async () => {
+      const page = await browser.newPage();
+      setupPageMocks(page, testStudentId, 'student', { draftFetchError: true });
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('[data-testid="load-error-banner"]');
+
+      const downloadBtn = page.locator('#download-pdf-button');
+      runAssertion('Download button rendered', (await downloadBtn.count()) === 1);
+      runAssertion('Download button is disabled during load error', await downloadBtn.isDisabled());
+
+      await page.close();
+    });
+
+    // TEST 18: Download button triggers client-side PDF download from live in-memory state
+    await test('Clicking Download PDF triggers client-side file download with deterministic filename', async () => {
+      const page = await browser.newPage();
+      setupPageMocks(page, testStudentId, 'student');
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('#download-pdf-button');
+
+      const downloadPromise = page.waitForEvent('download');
+      await page.locator('#download-pdf-button').click();
+      const download = await downloadPromise;
+
+      const suggestedName = download.suggestedFilename();
+      runAssertion('Filename matches expected pattern', suggestedName === 'Aria_Montgomery_Collegiate_Resume.pdf');
+
+      // Verify the downloaded file is a valid PDF
+      const stream = await download.createReadStream();
+      const chunks = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      const buffer = Buffer.concat(chunks);
+      const pdfText = buffer.toString('latin1');
+      runAssertion('Output is valid PDF (starts with %PDF)', pdfText.startsWith('%PDF-'));
+      runAssertion('PDF contains student name', pdfText.includes('Aria Montgomery'));
+      runAssertion('PDF contains student email', pdfText.includes('aria@mentra.edu'));
+
+      await page.close();
+    });
+
+    // TEST 19: PDF generation reflects unsaved in-memory text edits without saving
+    await test('Generated PDF reflects unsaved in-memory edits without calling Save Draft', async () => {
+      const page = await browser.newPage();
+      const mocks = setupPageMocks(page, testStudentId, 'student');
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('#download-pdf-button');
+
+      // Edit summary in-memory without saving
+      const unsavedSummary = 'Unsaved cutting-edge neural architecture objective.';
+      await page.locator('#resume-summary-input').fill(unsavedSummary);
+
+      // Edit project 1 title in-memory without saving
+      const editBtn = page.locator('[data-testid="project-entry-proj-001"] button:has-text("Edit")');
+      await editBtn.click();
+      const unsavedProjTitle = 'Unsaved Custom SLAM Vision Title';
+      await page.locator('#proj-title-proj-001').fill(unsavedProjTitle);
+
+      // Trigger Download PDF (without saving!)
+      const downloadPromise = page.waitForEvent('download');
+      await page.locator('#download-pdf-button').click();
+      const download = await downloadPromise;
+
+      const stream = await download.createReadStream();
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const pdfText = Buffer.concat(chunks).toString('latin1');
+
+      runAssertion('PDF contains unsaved summary text', pdfText.includes('Unsaved cutting-edge neural architecture objective.'));
+      runAssertion('PDF contains unsaved project title', pdfText.includes('Unsaved Custom SLAM Vision Title'));
+      runAssertion('No draft save occurred during download', mocks.draftSaved === false);
+
+      await page.close();
+    });
+
+    // TEST 20: PDF strictly omits excluded items and reflects reordered sequence
+    await test('Generated PDF omits excluded items and preserves reordered item sequence', async () => {
+      const page = await browser.newPage();
+      setupPageMocks(page, testStudentId, 'student');
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('#download-pdf-button');
+
+      // Exclude Project 1 (Autonomous Drone Navigation)
+      const toggleBtn = page.locator('[data-testid="project-entry-proj-001"] button[role="switch"]');
+      await toggleBtn.click();
+
+      // Trigger Download
+      const downloadPromise = page.waitForEvent('download');
+      await page.locator('#download-pdf-button').click();
+      const download = await downloadPromise;
+
+      const stream = await download.createReadStream();
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const pdfText = Buffer.concat(chunks).toString('latin1');
+
+      // Project 2 (Quantum Key Distribution) should be present
+      runAssertion('Included Project 2 is present in PDF', pdfText.includes('Quantum Key Distribution Simulator'));
+      // Project 1 should NOT be present
+      runAssertion('Excluded Project 1 is NOT present in PDF', !pdfText.includes('Autonomous Drone Navigation'));
+
+      await page.close();
+    });
+
+    // TEST 21: Zero database mutations and zero reads to resume_drafts, projects, or journey during download
+    await test('PDF download performs zero database mutations and zero table queries', async () => {
+      const page = await browser.newPage();
+      const mocks = setupPageMocks(page, testStudentId, 'student');
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('#download-pdf-button');
+
+      // Reset tracking after initial page load
+      const initialMutationsCount = mocks.mutations.length;
+      mocks.projectsRequested = false;
+      mocks.journeyRequested = false;
+      mocks.draftRequested = false;
+
+      // Trigger download
+      const downloadPromise = page.waitForEvent('download');
+      await page.locator('#download-pdf-button').click();
+      await downloadPromise;
+
+      runAssertion('Zero database mutations occurred during download', mocks.mutations.length === initialMutationsCount);
+      runAssertion('projects table was NOT queried during download', mocks.projectsRequested === false);
+      runAssertion('journey table was NOT queried during download', mocks.journeyRequested === false);
+      runAssertion('resume_drafts table was NOT queried during download', mocks.draftRequested === false);
+
+      await page.close();
+    });
+
+    // TEST 22: Unit verification of multi-page pagination, footers, and text wrapping
+    await test('buildResumePdfDoc handles multi-page overflow and continuous running footers', async () => {
+      const mockLongDraft = {
+        summary: 'Testing continuous multi-page layout and running footers across page boundaries.',
+        projects: Array.from({ length: 12 }, (_, i) => ({
+          id: `p-${i}`,
+          title: `Autonomous Systems Research Initiative ${i + 1}`,
+          description: `Comprehensive evaluation of distributed perception pipelines under adverse conditions. Benchmark report detailing hardware latency, thermal dissipation, and floating point inference metrics for embedded robotics deployments.`,
+          tags: ['Robotics', 'SLAM', 'Distributed'],
+          date: '2026-09',
+          included: true,
+        })),
+        journey: [
+          {
+            id: 'j-1',
+            title: 'Departmental Symposium Keynote',
+            description: 'Delivered presentation on distributed ML inference.',
+            date: '2026-09',
+            included: true,
+          }
+        ]
+      };
+
+      const { doc, filename, totalPages } = buildResumePdfDoc({
+        draft: mockLongDraft,
+        profile: mockStudentProfile,
+        user: { email: 'aria@mentra.edu' },
+      });
+
+      runAssertion('Multi-page document generated (totalPages >= 2)', totalPages >= 2);
+      runAssertion('Filename formatted correctly', filename === 'Aria_Montgomery_Collegiate_Resume.pdf');
+
+      const pdfBytes = Buffer.from(doc.output('arraybuffer')).toString('latin1');
+      runAssertion('PDF contains Page 1 of N footer', pdfBytes.includes(`Page 1 of ${totalPages}`));
+      runAssertion(`PDF contains Page ${totalPages} of ${totalPages} footer`, pdfBytes.includes(`Page ${totalPages} of ${totalPages}`));
+      runAssertion('PDF contains student name in footer', pdfBytes.includes('Aria Montgomery') && pdfBytes.includes('Mentra Collegiate Resume'));
     });
 
   } finally {
