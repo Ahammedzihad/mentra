@@ -68,6 +68,87 @@ export function sanitizeFilename(name) {
 }
 
 /**
+ * Assembles academic details for resume headers (both preview and PDF export).
+ * When `program` and `course` contain the same value, displays that value only once.
+ * If the values differ, follows the existing intended display behavior.
+ *
+ * @param {Object} profile - Candidate profile containing program, course, department, specialization.
+ * @param {Object} [options]
+ * @param {Function} [options.sanitize] - Optional text sanitizer (e.g. sanitizePdfText).
+ * @param {string} [options.fallback] - Fallback when no academic details are present.
+ * @param {Function} [options.formatSpec] - Formatter for specialization text.
+ * @returns {string[]} Array of formatted academic details parts.
+ */
+export function getAcademicDetailsParts(profile, {
+  sanitize = (s) => (typeof s === 'string' ? s.trim() : ''),
+  fallback = 'Department Scholar',
+  formatSpec = (s) => `Specialization: ${s}`
+} = {}) {
+  const sanitizeStr = (val) => {
+    if (typeof val !== 'string') return '';
+    const cleaned = sanitize(val);
+    return typeof cleaned === 'string' ? cleaned.trim() : '';
+  };
+
+  const dept = sanitizeStr(profile?.department);
+  const course = sanitizeStr(profile?.course);
+  const prog = sanitizeStr(profile?.program);
+  const spec = sanitizeStr(profile?.specialization);
+
+  const parts = [];
+
+  const hasCourse = Boolean(course);
+  const hasProg = Boolean(prog);
+  const hasDept = Boolean(dept);
+
+  // Compare case-insensitively and whitespace-trimmed to detect exact or casing duplicate values
+  const courseMatchesProg = hasCourse && hasProg && course.toLowerCase() === prog.toLowerCase();
+  const deptMatchesProg = hasDept && hasProg && dept.toLowerCase() === prog.toLowerCase();
+
+  if (courseMatchesProg || deptMatchesProg) {
+    // When program and course (or department) contain the same value, display that value only once.
+    // If an institutional department exists that differs from program/course, preserve it first.
+    if (hasDept && !deptMatchesProg) {
+      parts.push(dept);
+    } else if (hasCourse && !courseMatchesProg) {
+      parts.push(course);
+    }
+    // Display the program/course value exactly once
+    parts.push(prog || course || dept);
+  } else {
+    // If the values differ, follow the existing intended display behavior:
+    const primary = dept || course;
+    if (primary) {
+      parts.push(primary);
+    }
+    if (prog && (!primary || prog.toLowerCase() !== primary.toLowerCase())) {
+      parts.push(prog);
+    }
+    if (parts.length === 0 && fallback) {
+      parts.push(fallback);
+    }
+  }
+
+  // Append specialization if present
+  if (spec && typeof formatSpec === 'function') {
+    const formattedSpec = formatSpec(spec);
+    if (formattedSpec) {
+      parts.push(formattedSpec);
+    }
+  }
+
+  return parts;
+}
+
+/**
+ * Returns the academic details subtitle string joined by standard collegiate bullet ' • '.
+ */
+export function formatAcademicDetails(profile, options = {}) {
+  return getAcademicDetailsParts(profile, options).join(' • ');
+}
+
+
+/**
  * Constructs the jsPDF document instance from current in-memory draft state.
  * Returns the document, filename, page count, and binary blob.
  */
@@ -149,11 +230,10 @@ export function buildResumePdfDoc({ draft, profile, user }) {
   currentY += 16;
 
   // Subtitle: Department & Academic Program
-  const academicDetails = [
-    sanitizePdfText(profile?.department) || 'Department Scholar',
-    sanitizePdfText(profile?.program),
-    profile?.specialization ? `Specialization: ${sanitizePdfText(profile.specialization)}` : null,
-  ].filter(Boolean).join(' • ');
+  const academicDetails = formatAcademicDetails(profile, {
+    sanitize: sanitizePdfText,
+    fallback: 'Department Scholar',
+  });
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);

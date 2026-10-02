@@ -22,7 +22,7 @@ import {
   Award,
   Trophy
 } from 'lucide-react';
-import { generateResumePdf } from './generateResumePdf';
+import { generateResumePdf, formatAcademicDetails } from './generateResumePdf';
 
 /**
  * Safely parses and normalizes saved draft content from public.resume_drafts.content.
@@ -959,9 +959,10 @@ export const ResumeBuilderPage = () => {
                   {profile?.full_name || 'Student Scholar'}
                 </div>
                 <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
-                  {user?.email} &bull; {profile?.department || 'Department Undergrad'}
-                  {profile?.program ? ` &bull; ${profile.program}` : ''}
-                  {profile?.specialization ? ` (${profile.specialization})` : ''}
+                  {user?.email} &bull; {formatAcademicDetails(profile, {
+                    fallback: 'Department Undergrad',
+                    formatSpec: (spec) => `(${spec})`
+                  })}
                 </div>
                 {(profile?.year || profile?.batch) && (
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
@@ -2275,10 +2276,11 @@ export const ResumeBuilderPage = () => {
                 >
                   {profile?.full_name || 'Student Scholar'}
                 </h2>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.35rem', lineHeight: 1.4 }}>
-                  <span>{profile?.department || 'Department Scholar'}</span>
-                  {profile?.program && <span> &bull; {profile.program}</span>}
-                  {profile?.specialization && <span> &bull; Specialization: {profile.specialization}</span>}
+                <div
+                  style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.35rem', lineHeight: 1.4 }}
+                  data-testid="preview-academic-details"
+                >
+                  <span>{formatAcademicDetails(profile, { fallback: 'Department Scholar' })}</span>
                 </div>
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
                   <span>{user?.email}</span>

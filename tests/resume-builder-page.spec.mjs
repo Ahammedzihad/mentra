@@ -15,7 +15,7 @@
 
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
-import { buildResumePdfDoc } from '../features/resume/generateResumePdf.js';
+import { buildResumePdfDoc, formatAcademicDetails, getAcademicDetailsParts } from '../features/resume/generateResumePdf.js';
 
 let viteServer;
 let browser;
@@ -1625,6 +1625,169 @@ async function runTests() {
       runAssertion('Zero database mutations occurred overall', mocks.mutations.length === 0);
 
       await page.close();
+    });
+
+    // TEST 31: Academic details formatting and PDF generation deduplicates matching program/course and preserves differing values
+    await test('Academic details formatting and PDF generation deduplicates matching program/course and preserves differing values', async () => {
+      // 1. Matching program and course: displays value only once
+      const matchingBcaProfile = {
+        department: 'BCA',
+        course: 'BCA',
+        program: 'BCA',
+        specialization: 'AI & Machine Learning',
+      };
+      const formattedMatching = formatAcademicDetails(matchingBcaProfile);
+      runAssertion('Matching BCA profile displays BCA only once', formattedMatching === 'BCA • Specialization: AI & Machine Learning');
+      runAssertion('Matching BCA profile does NOT contain duplicate BCA • BCA', !formattedMatching.includes('BCA • BCA'));
+
+      // 1b. Matching program and course without department
+      const matchingNoDept = {
+        course: 'BCA',
+        program: 'BCA',
+        specialization: 'AI & Machine Learning',
+      };
+      runAssertion('Matching course and program without department displays BCA once', formatAcademicDetails(matchingNoDept) === 'BCA • Specialization: AI & Machine Learning');
+
+      // 1c. Matching program and course without specialization
+      const matchingNoSpec = {
+        course: 'B.Tech',
+        program: 'B.Tech',
+      };
+      runAssertion('Matching B.Tech course and program displays B.Tech once', formatAcademicDetails(matchingNoSpec) === 'B.Tech');
+
+      // 2. Differing values: follows existing intended display behavior (displays both)
+      const differingCourseProg = {
+        course: 'Computer Science',
+        program: 'B.Tech',
+        specialization: 'Artificial Intelligence',
+      };
+      const formattedDiffering = formatAcademicDetails(differingCourseProg);
+      runAssertion('Differing course and program displays both values', formattedDiffering === 'Computer Science • B.Tech • Specialization: Artificial Intelligence');
+      runAssertion('Differing course and program preserves course', formattedDiffering.includes('Computer Science'));
+      runAssertion('Differing course and program preserves program', formattedDiffering.includes('B.Tech'));
+
+      // 2b. Differing department and program
+      const differingDeptProg = {
+        department: 'Computer Science',
+        program: 'B.Tech',
+        specialization: 'Artificial Intelligence',
+      };
+      runAssertion('Differing department and program displays both values', formatAcademicDetails(differingDeptProg) === 'Computer Science • B.Tech • Specialization: Artificial Intelligence');
+
+      // 2c. Differing course and program (BCA and MCA)
+      const differingBcaMca = {
+        course: 'BCA',
+        program: 'MCA',
+      };
+      runAssertion('Differing BCA and MCA displays both', formatAcademicDetails(differingBcaMca) === 'BCA • MCA');
+
+      // 2d. Distinct department with matching course and program
+      const distinctDeptMatchingCourseProg = {
+        department: 'Computer Science',
+        course: 'B.Tech',
+        program: 'B.Tech',
+        specialization: 'Artificial Intelligence',
+      };
+      runAssertion('Distinct department with matching course/prog preserves department and shows program once', formatAcademicDetails(distinctDeptMatchingCourseProg) === 'Computer Science • B.Tech • Specialization: Artificial Intelligence');
+
+      // 3. Verify PDF generation with matching values
+      const testDraft = {
+        summary: 'Focused academic research in artificial intelligence.',
+        skills: [{ id: 's-1', name: 'Python', included: true }],
+        projects: [],
+        journey: [],
+        achievements: [],
+      };
+
+      const { doc: matchingDoc } = buildResumePdfDoc({
+        draft: testDraft,
+        profile: matchingBcaProfile,
+        user: { email: 'student@mentra.edu' },
+      });
+      const matchingPdfText = Buffer.from(matchingDoc.output('arraybuffer')).toString('latin1').replace(/\x95/g, '•');
+      runAssertion('Matching PDF text contains single BCA with specialization', matchingPdfText.includes('BCA • Specialization: AI & Machine Learning'));
+      runAssertion('Matching PDF text does NOT contain duplicate BCA • BCA', !matchingPdfText.includes('BCA • BCA'));
+
+      // 4. Verify PDF generation with differing values
+      const { doc: differingDoc } = buildResumePdfDoc({
+        draft: testDraft,
+        profile: differingCourseProg,
+        user: { email: 'student@mentra.edu' },
+      });
+      const differingPdfText = Buffer.from(differingDoc.output('arraybuffer')).toString('latin1').replace(/\x95/g, '•');
+      runAssertion('Differing PDF text contains Computer Science • B.Tech', differingPdfText.includes('Computer Science • B.Tech'));
+    });
+
+    // TEST 32: Resume Builder live preview renders academic line with deduplicated matching values and distinct differing values
+    await test('Resume Builder live preview renders academic line with deduplicated matching values and distinct differing values', async () => {
+      // 1. Test student with matching course and program ('BCA')
+      const matchingBcaStudent = {
+        id: testStudentId,
+        full_name: 'Devon Vance',
+        role: 'student',
+        department: 'BCA',
+        course: 'BCA',
+        program: 'BCA',
+        specialization: 'AI & Machine Learning',
+        year: '2',
+        batch: '2028',
+        bio: 'BCA Scholar.',
+        skills: ['Python', 'SQL'],
+        achievements: ['Dean Commendation'],
+        is_verified: true,
+      };
+
+      const page1 = await browser.newPage();
+      setupPageMocks(page1, testStudentId, 'student', { profile: matchingBcaStudent });
+      await page1.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'devon@mentra.edu', { role: 'student' }) }
+      );
+
+      await page1.goto(`${baseUrl}/resume`);
+      await page1.waitForSelector('[data-testid="preview-academic-details"]');
+
+      const academicDetailsEl = page1.locator('[data-testid="preview-academic-details"]');
+      const academicText = await academicDetailsEl.innerText();
+      runAssertion('Preview displays single BCA with specialization', academicText.includes('BCA • Specialization: AI & Machine Learning'));
+      runAssertion('Preview does NOT display duplicate BCA • BCA', !academicText.includes('BCA • BCA'));
+      await page1.close();
+
+      // 2. Test student with differing department and program ('Computer Science' and 'B.Tech')
+      const differingStudent = {
+        id: testStudentId,
+        full_name: 'Aria Montgomery',
+        role: 'student',
+        department: 'Computer Science',
+        course: 'Computer Science',
+        program: 'B.Tech',
+        specialization: 'Artificial Intelligence',
+        year: '3',
+        batch: '2027',
+        bio: 'B.Tech Scholar.',
+        skills: ['TypeScript', 'Python'],
+        achievements: ['HackMIT Winner'],
+        is_verified: true,
+      };
+
+      const page2 = await browser.newPage();
+      setupPageMocks(page2, testStudentId, 'student', { profile: differingStudent });
+      await page2.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page2.goto(`${baseUrl}/resume`);
+      await page2.waitForSelector('[data-testid="preview-academic-details"]');
+
+      const differingAcademicText = await page2.locator('[data-testid="preview-academic-details"]').innerText();
+      runAssertion('Preview displays Computer Science • B.Tech for differing values', differingAcademicText.includes('Computer Science • B.Tech'));
+      runAssertion('Preview includes specialization for differing profile', differingAcademicText.includes('Specialization: Artificial Intelligence'));
+      await page2.close();
     });
 
   } finally {
