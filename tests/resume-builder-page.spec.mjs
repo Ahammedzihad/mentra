@@ -134,6 +134,62 @@ const confirmedJourneyColumns = new Set([
 ]);
 const nonexistentColumns = ['category', 'updated_at', 'date', 'reflection', 'phase'];
 
+const mockSavedDraft = {
+  id: 'saved-draft-1234',
+  user_id: testStudentId,
+  content: {
+    summary: 'Saved customized academic objective highlighting distributed systems research.',
+    projects: [
+      {
+        id: 'proj-002',
+        sourceId: 'proj-002',
+        sourceType: 'project',
+        title: 'Quantum Key Distribution Simulator (Saved Custom Title)',
+        description: 'Customized description edited for resume draft specifically.',
+        tags: ['Quantum', 'Cryptography', 'Python'],
+        created_at: '2026-09-10T14:30:00Z',
+        date: 'Sep 2026',
+        included: true,
+        order: 0,
+        originalTitle: 'Quantum Key Distribution Simulator',
+        originalDescription: 'Python simulation of BB84 protocol with noisy optical channels.'
+      },
+      {
+        id: 'proj-001',
+        sourceId: 'proj-001',
+        sourceType: 'project',
+        title: 'Autonomous Drone Navigation',
+        description: 'Real-time computer vision SLAM on edge microcontrollers.',
+        tags: ['Robotics', 'Computer-Vision', 'Embedded'],
+        created_at: '2026-09-15T10:00:00Z',
+        date: 'Sep 2026',
+        included: false, // Excluded in saved draft!
+        order: 1,
+        originalTitle: 'Autonomous Drone Navigation',
+        originalDescription: 'Real-time computer vision SLAM on edge microcontrollers.'
+      }
+    ],
+    journey: [
+      {
+        id: 'journey-002',
+        sourceId: 'journey-002',
+        sourceType: 'journey',
+        title: 'Benchmarked Tensor RT Engine (Saved Custom Milestone)',
+        description: 'Custom milestone details saved previously.',
+        created_at: '2026-09-05T09:00:00Z',
+        date: 'Sep 2026',
+        included: true,
+        order: 0,
+        originalTitle: 'Benchmarked Tensor RT Engine',
+        originalDescription: 'Achieved 4x inference speedup on embedded Jetson Nano prototype.'
+      }
+    ],
+    version: 1,
+    savedAt: '2026-09-25T15:00:00Z'
+  },
+  updated_at: '2026-09-25T15:00:00Z'
+};
+
 async function setup() {
   viteServer = await createServer({
     server: { port: 5220 },
@@ -151,7 +207,7 @@ async function teardown() {
 
 async function runTests() {
   console.log('======================================================================');
-  console.log('  MENTRA PHASE 6 PART B — STEP 6: RESUME BUILDER SCREEN SUITE');
+  console.log('  MENTRA PHASE 6 PART B — STEPS 6 & 7: RESUME BUILDER & DRAFT PERSISTENCE');
   console.log('======================================================================\n');
 
   let passedTests = 0;
@@ -172,20 +228,101 @@ async function runTests() {
   const storageKey = 'sb-jqiqbiqybqnpmibceath-auth-token';
 
   // Helper to setup mock routes on a Playwright page
-  function setupPageMocks(page, currentUserId = testStudentId, role = 'student') {
+  function setupPageMocks(page, currentUserId = testStudentId, role = 'student', options = {}) {
     const interceptedQueries = {
       projectsRequested: false,
       journeyRequested: false,
+      draftRequested: false,
+      draftSaved: false,
+      saveAttempts: 0,
+      savedPayload: null,
+      savedUrl: null,
+      savedMethod: null,
+      savedHeaders: null,
       mutations: [],
+      projectOrJourneyMutations: [],
     };
 
     page.route('**/rest/v1/**', async (route) => {
       const url = route.request().url();
       const method = route.request().method();
 
+      // Resume Drafts endpoint
+      if (url.includes('/rest/v1/resume_drafts')) {
+        if (method === 'GET') {
+          interceptedQueries.draftRequested = true;
+          interceptedQueries.draftQueryUrl = url;
+
+          if (options.draftFetchError) {
+            return route.fulfill({
+              status: 500,
+              contentType: 'application/json',
+              body: JSON.stringify({
+                code: '50000',
+                message: 'Database query failed when checking resume_drafts.',
+              }),
+            });
+          }
+
+          if (options.savedDraft) {
+            return route.fulfill({
+              status: 200,
+              contentType: 'application/json',
+              body: JSON.stringify(options.savedDraft),
+            });
+          }
+
+          // No saved draft row exists for user
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: 'null',
+          });
+        }
+
+        if (['POST', 'PUT', 'PATCH'].includes(method)) {
+          interceptedQueries.draftSaved = true;
+          interceptedQueries.saveAttempts++;
+          interceptedQueries.savedMethod = method;
+          interceptedQueries.savedUrl = url;
+          const postBody = route.request().postDataJSON();
+          interceptedQueries.savedPayload = postBody;
+          interceptedQueries.savedHeaders = route.request().headers();
+
+          if (options.saveDraftDelayMs) {
+            await new Promise((res) => setTimeout(res, options.saveDraftDelayMs));
+          }
+
+          if (options.saveDraftError) {
+            return route.fulfill({
+              status: 500,
+              contentType: 'application/json',
+              body: JSON.stringify({
+                code: '50001',
+                message: 'Failed to write draft to storage.',
+              }),
+            });
+          }
+
+          return route.fulfill({
+            status: 201,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              id: options.savedDraft?.id || 'saved-draft-uuid-001',
+              user_id: postBody.user_id,
+              content: postBody.content,
+              updated_at: postBody.updated_at || new Date().toISOString(),
+            }),
+          });
+        }
+      }
+
       // Track any mutation attempts
       if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
         interceptedQueries.mutations.push({ method, url });
+        if (url.includes('/rest/v1/projects') || url.includes('/rest/v1/journey')) {
+          interceptedQueries.projectOrJourneyMutations.push({ method, url });
+        }
         return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
       }
 
@@ -548,6 +685,213 @@ async function runTests() {
         runAssertion(`Rejected nonexistent column query (${col}) with 400`, result.status === 400);
         runAssertion(`Error message identifies nonexistent column "${col}"`, result.message && result.message.includes(col));
       }
+
+      await page.close();
+    });
+
+    // TEST 10: Existing saved draft loads and hydrates instead of fresh auto-population
+    await test('Loading an existing saved draft for the signed-in user hydrates editor without querying source records', async () => {
+      const page = await browser.newPage();
+      const mocks = setupPageMocks(page, testStudentId, 'student', { savedDraft: mockSavedDraft });
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('h1:has-text("Collegiate Resume Builder")');
+
+      // Check draft source status badge shows "Saved Draft"
+      const statusBadge = page.locator('[data-testid="draft-source-status"]');
+      runAssertion('Draft source badge indicates "Saved Draft"', await statusBadge.textContent().then((t) => t.includes('Saved Draft')));
+
+      // Check that summary was hydrated from saved draft
+      const summaryInput = page.locator('#resume-summary-input');
+      runAssertion('Summary is hydrated from saved draft', await summaryInput.inputValue().then((v) => v.includes('Saved customized academic objective')));
+
+      // Check that saved order and custom titles are hydrated
+      // In mockSavedDraft: proj-002 was first with "(Saved Custom Title)", proj-001 was second and excluded
+      const firstProjectTitle = page.locator('[data-testid="preview-project-proj-002"] h4');
+      runAssertion('Saved custom project title rendered in preview', await firstProjectTitle.textContent().then((t) => t.includes('Quantum Key Distribution Simulator (Saved Custom Title)')));
+
+      // Proj-001 was excluded in saved draft, so preview should not contain it
+      const excludedProjPreview = page.locator('[data-testid="preview-project-proj-001"]');
+      runAssertion('Excluded project from saved draft is omitted from preview', (await excludedProjPreview.count()) === 0);
+
+      // Verify that projects and journey tables were NOT queried to populate draft
+      runAssertion('resume_drafts was queried with user_id', mocks.draftRequested && mocks.draftQueryUrl.includes(`user_id=eq.${testStudentId}`));
+      runAssertion('projects table was NOT queried for draft', mocks.projectsRequested === false);
+      runAssertion('journey table was NOT queried for draft', mocks.journeyRequested === false);
+
+      await page.close();
+    });
+
+    // TEST 11: Auto-populates from Journey and Projects only when no saved row exists
+    await test('Falling back to Step 6 auto-populated draft only when no saved row exists', async () => {
+      const page = await browser.newPage();
+      const mocks = setupPageMocks(page, testStudentId, 'student', { savedDraft: null });
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('h1:has-text("Collegiate Resume Builder")');
+
+      // Check draft source status badge shows "Auto-Populated Draft"
+      const statusBadge = page.locator('[data-testid="draft-source-status"]');
+      runAssertion('Draft source badge indicates "Auto-Populated Draft"', await statusBadge.textContent().then((t) => t.includes('Auto-Populated Draft')));
+
+      // Verify resume_drafts was queried first, and then projects and journey were queried as fallback
+      runAssertion('resume_drafts was queried', mocks.draftRequested);
+      runAssertion('projects table was queried after empty saved row', mocks.projectsRequested);
+      runAssertion('journey table was queried after empty saved row', mocks.journeyRequested);
+
+      await page.close();
+    });
+
+    // TEST 12: Load errors are kept distinct from empty result and prevent overwrite
+    await test('Keeping load errors distinct from an empty result and preventing overwrite', async () => {
+      const page = await browser.newPage();
+      const mocks = setupPageMocks(page, testStudentId, 'student', { draftFetchError: true });
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('[data-testid="load-error-banner"]');
+
+      runAssertion('Load error banner is displayed', (await page.locator('[data-testid="load-error-banner"]').count()) === 1);
+      // Ensure we did NOT fall back to silently overwriting with projects/journey
+      runAssertion('projects table was NOT queried on load error', mocks.projectsRequested === false);
+      runAssertion('journey table was NOT queried on load error', mocks.journeyRequested === false);
+
+      // Crucial: Save Draft button must be disabled to prevent accidental overwrite
+      const saveButton = page.locator('#save-draft-button');
+      runAssertion('Save Draft button is disabled during load error', await saveButton.isDisabled());
+
+      await page.close();
+    });
+
+    // TEST 13: Saving editor state with authenticated user ID and unique conflict target
+    await test('Saving editor state with authenticated user ID and correct unique conflict target', async () => {
+      const page = await browser.newPage();
+      const mocks = setupPageMocks(page, testStudentId, 'student', { savedDraft: null });
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('#save-draft-button');
+
+      // Edit summary
+      const summaryInput = page.locator('#resume-summary-input');
+      await summaryInput.fill('Step 7 saved summary text for academic CV.');
+
+      // Click Save Draft
+      await page.locator('#save-draft-button').click();
+      await page.waitForSelector('[data-testid="save-success-banner"]');
+
+      runAssertion('Save draft request was issued', mocks.draftSaved === true);
+      runAssertion('Upsert includes unique conflict target on_conflict=user_id', mocks.savedUrl.includes('on_conflict=user_id'));
+      runAssertion('User ID in payload strictly equals authenticated user', mocks.savedPayload.user_id === testStudentId);
+      runAssertion('Content summary in payload reflects editor text', mocks.savedPayload.content.summary === 'Step 7 saved summary text for academic CV.');
+      runAssertion('Updated_at timestamp is present in payload', typeof mocks.savedPayload.updated_at === 'string' && mocks.savedPayload.updated_at.length > 0);
+      runAssertion('Save success banner rendered', (await page.locator('[data-testid="save-success-banner"]').count()) === 1);
+      runAssertion('Status badge transitioned to "Saved Draft"', await page.locator('[data-testid="draft-source-status"]').textContent().then((t) => t.includes('Saved Draft')));
+
+      await page.close();
+    });
+
+    // TEST 14: Preventing duplicate saves while save is in flight
+    await test('Preventing duplicate saves while save is in progress', async () => {
+      const page = await browser.newPage();
+      const mocks = setupPageMocks(page, testStudentId, 'student', { saveDraftDelayMs: 600 });
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('#save-draft-button');
+
+      const saveButton = page.locator('#save-draft-button');
+      // Trigger save
+      await saveButton.click();
+      // While in-flight, verify button is disabled
+      runAssertion('Save button is disabled while saving', await saveButton.isDisabled());
+      runAssertion('Save button shows saving label', await saveButton.textContent().then((t) => t.includes('Saving...')));
+
+      // Wait for save completion
+      await page.waitForSelector('[data-testid="save-success-banner"]');
+      runAssertion('Exactly 1 save request was executed', mocks.saveAttempts === 1);
+
+      await page.close();
+    });
+
+    // TEST 15: Preserving editor/source data when save fails
+    await test('Preserving editor and source data when save fails', async () => {
+      const page = await browser.newPage();
+      const mocks = setupPageMocks(page, testStudentId, 'student', { saveDraftError: true });
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('#save-draft-button');
+
+      // Edit summary
+      const uniqueText = 'Unsaved research summary text to verify data preservation upon failure.';
+      const summaryInput = page.locator('#resume-summary-input');
+      await summaryInput.fill(uniqueText);
+
+      // Trigger Save (will fail)
+      await page.locator('#save-draft-button').click();
+      await page.waitForSelector('[data-testid="save-error-banner"]');
+
+      runAssertion('Save error banner displayed', (await page.locator('[data-testid="save-error-banner"]').count()) === 1);
+      // Verify editor content remains intact
+      runAssertion('Summary textarea retains user input after failure', await summaryInput.inputValue().then((v) => v === uniqueText));
+
+      await page.close();
+    });
+
+    // TEST 16: Ensuring no project or Journey mutation occurs
+    await test('Ensuring no project or Journey mutation occurs throughout Step 7 flow', async () => {
+      const page = await browser.newPage();
+      const mocks = setupPageMocks(page, testStudentId, 'student');
+      await page.addInitScript(
+        ({ key, session }) => {
+          localStorage.setItem(key, JSON.stringify(session));
+        },
+        { key: storageKey, session: makeMockSession(testStudentId, 'aria@mentra.edu', { role: 'student' }) }
+      );
+
+      await page.goto(`${baseUrl}/resume`);
+      await page.waitForSelector('#save-draft-button');
+
+      // Perform edits
+      await page.locator('#resume-summary-input').fill('Testing zero mutations to projects or journey.');
+      await page.locator('#save-draft-button').click();
+      await page.waitForSelector('[data-testid="save-success-banner"]');
+
+      // Assert that ZERO mutation requests were made to projects or journey
+      runAssertion('Zero project or journey mutations occurred', mocks.projectOrJourneyMutations.length === 0);
 
       await page.close();
     });

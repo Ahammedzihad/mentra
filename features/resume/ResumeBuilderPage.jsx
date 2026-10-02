@@ -16,13 +16,81 @@ import {
   Compass,
   FolderPlus,
   RotateCcw,
+  CheckCircle2,
   Info
 } from 'lucide-react';
+
+/**
+ * Safely parses and normalizes saved draft content from public.resume_drafts.content.
+ * Ensures malformed, partial, or missing fields never crash the UI or corrupt state.
+ */
+function safeHydrateDraft(content, profile) {
+  if (!content || typeof content !== 'object') {
+    return {
+      summary: profile?.bio || '',
+      projects: [],
+      journey: []
+    };
+  }
+
+  const rawSummary =
+    typeof content.summary === 'string'
+      ? content.summary
+      : (profile?.bio ||
+        (profile?.department
+          ? `Collegiate scholar in ${profile.department} focused on academic excellence, hands-on project work, and interdisciplinary collaboration.`
+          : 'Collegiate scholar focused on academic excellence, hands-on project work, and interdisciplinary collaboration.'));
+
+  const rawProjects = Array.isArray(content.projects) ? content.projects : [];
+  const projects = rawProjects.map((p, idx) => ({
+    id: p?.id || `proj-hydrated-${idx}`,
+    sourceId: p?.sourceId || p?.id || `proj-${idx}`,
+    sourceType: 'project',
+    title: typeof p?.title === 'string' ? p.title : 'Untitled Project',
+    description: typeof p?.description === 'string' ? p.description : '',
+    tags: Array.isArray(p?.tags) ? p.tags : [],
+    created_at: p?.created_at || null,
+    date:
+      typeof p?.date === 'string' && p.date
+        ? p.date
+        : p?.created_at
+        ? new Date(p.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short' })
+        : '',
+    included: typeof p?.included === 'boolean' ? p.included : true,
+    originalTitle: typeof p?.originalTitle === 'string' ? p.originalTitle : (p?.title || 'Untitled Project'),
+    originalDescription: typeof p?.originalDescription === 'string' ? p.originalDescription : (p?.description || '')
+  }));
+
+  const rawJourney = Array.isArray(content.journey) ? content.journey : [];
+  const journey = rawJourney.map((j, idx) => ({
+    id: j?.id || `journey-hydrated-${idx}`,
+    sourceId: j?.sourceId || j?.id || `journey-${idx}`,
+    sourceType: 'journey',
+    title: typeof j?.title === 'string' ? j.title : 'Milestone',
+    description: typeof j?.description === 'string' ? j.description : '',
+    created_at: j?.created_at || null,
+    date:
+      typeof j?.date === 'string' && j.date
+        ? j.date
+        : j?.created_at
+        ? new Date(j.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short' })
+        : '',
+    included: typeof j?.included === 'boolean' ? j.included : true,
+    originalTitle: typeof j?.originalTitle === 'string' ? j.originalTitle : (j?.title || 'Milestone'),
+    originalDescription: typeof j?.originalDescription === 'string' ? j.originalDescription : (j?.description || '')
+  }));
+
+  return {
+    summary: rawSummary,
+    projects,
+    journey
+  };
+}
 
 export const ResumeBuilderPage = () => {
   const { user, profile } = useAuth();
 
-  // In-memory draft state initialized from student's own Journey and Projects
+  // In-memory draft state (hydrated from saved draft OR auto-populated from Journey and Projects)
   const [draft, setDraft] = useState({
     summary: '',
     projects: [],
@@ -30,28 +98,63 @@ export const ResumeBuilderPage = () => {
   });
 
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [isSavedDraft, setIsSavedDraft] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+
+  // Save operation state
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState(null);
 
   // Active inline edit states for individual entries
   const [editingProjectId, setEditingProjectId] = useState(null);
   const [editingJourneyId, setEditingJourneyId] = useState(null);
 
   /**
-   * Securely loads authenticated user's own projects and journey entries.
-   * RLS and user_id filtering guarantee isolation from other users' records.
+   * Loads user's saved draft from public.resume_drafts.
+   * If a saved row exists, hydrates from saved content.
+   * If no saved row exists, auto-populates from user's authentic Journey & Projects.
+   * If a load error occurs, displays the error and prevents accidental save overwrites.
    */
-  const loadSourceRecords = useCallback(async () => {
+  const loadDraftOrSourceRecords = useCallback(async () => {
     if (!user || !isSupabaseConfigured) {
       setLoading(false);
       return;
     }
 
     setLoading(true);
-    setError(null);
+    setLoadError(null);
+    setSaveError(null);
 
     try {
-      // Concurrently query authenticated student's own projects and journey milestones
-      // Selecting strictly confirmed existing schema columns
+      // 1. Check for existing saved draft row for the authenticated user
+      const { data: savedDraftRow, error: draftFetchError } = await supabase
+        .from('resume_drafts')
+        .select('id, user_id, content, updated_at')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (draftFetchError) {
+        console.error('Error fetching saved resume draft:', draftFetchError);
+        // Treat load errors distinctly from "no row found"
+        // Avoid silently replacing potentially saved data with a fresh draft
+        setLoadError(draftFetchError.message || 'Unable to check for your saved resume draft.');
+        setLoading(false);
+        return;
+      }
+
+      if (savedDraftRow && savedDraftRow.content) {
+        // Hydrate from existing saved draft
+        const hydrated = safeHydrateDraft(savedDraftRow.content, profile);
+        setDraft(hydrated);
+        setIsSavedDraft(true);
+        setLastSavedAt(savedDraftRow.updated_at);
+        setLoading(false);
+        return;
+      }
+
+      // 2. No saved draft exists -> Auto-populate from authentic Journey & Projects
       const [projRes, journeyRes] = await Promise.all([
         supabase
           .from('projects')
@@ -71,7 +174,6 @@ export const ResumeBuilderPage = () => {
       const rawProjects = projRes.data || [];
       const rawJourney = journeyRes.data || [];
 
-      // Initialize in-memory resume draft structure
       setDraft({
         summary:
           profile?.bio ||
@@ -108,17 +210,97 @@ export const ResumeBuilderPage = () => {
           originalDescription: j.description || ''
         }))
       });
+      setIsSavedDraft(false);
+      setLastSavedAt(null);
     } catch (err) {
-      console.error('Error auto-populating resume draft:', err);
-      setError(err.message || 'Unable to load your collegiate projects and milestones.');
+      console.error('Error loading resume data:', err);
+      setLoadError(err.message || 'Unable to load collegiate records.');
     } finally {
       setLoading(false);
     }
   }, [user, profile]);
 
   useEffect(() => {
-    loadSourceRecords();
-  }, [loadSourceRecords]);
+    loadDraftOrSourceRecords();
+  }, [loadDraftOrSourceRecords]);
+
+  /**
+   * Saves the current editor state to public.resume_drafts.
+   * Upserts on user_id conflict target using authenticated user.id.
+   * Updates updated_at timestamp.
+   * Does NOT modify projects or journey tables.
+   */
+  const handleSaveDraft = async () => {
+    if (!user || isSaving || Boolean(loadError)) return;
+
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveSuccess(false);
+
+    try {
+      const nowIso = new Date().toISOString();
+
+      // Structure content preserving item order, inclusion, inline edits, and summary
+      const contentPayload = {
+        summary: draft.summary,
+        projects: draft.projects.map((p, idx) => ({
+          id: p.id,
+          sourceId: p.sourceId,
+          sourceType: 'project',
+          title: p.title,
+          description: p.description,
+          tags: p.tags,
+          created_at: p.created_at,
+          date: p.date,
+          included: p.included,
+          order: idx,
+          originalTitle: p.originalTitle,
+          originalDescription: p.originalDescription
+        })),
+        journey: draft.journey.map((j, idx) => ({
+          id: j.id,
+          sourceId: j.sourceId,
+          sourceType: 'journey',
+          title: j.title,
+          description: j.description,
+          created_at: j.created_at,
+          date: j.date,
+          included: j.included,
+          order: idx,
+          originalTitle: j.originalTitle,
+          originalDescription: j.originalDescription
+        })),
+        version: 1,
+        savedAt: nowIso
+      };
+
+      // Upsert into resume_drafts with unique conflict target 'user_id'
+      const { data, error: upsertError } = await supabase
+        .from('resume_drafts')
+        .upsert(
+          {
+            user_id: user.id,
+            content: contentPayload,
+            updated_at: nowIso
+          },
+          { onConflict: 'user_id' }
+        )
+        .select('id, user_id, updated_at')
+        .single();
+
+      if (upsertError) throw upsertError;
+
+      setIsSavedDraft(true);
+      setLastSavedAt(data?.updated_at || nowIso);
+      setSaveSuccess(true);
+    } catch (err) {
+      console.error('Error saving resume draft:', err);
+      // Keep current editor state completely intact upon error
+      setSaveError(err.message || 'Failed to save resume draft. Your editor changes have been preserved.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // --- In-Memory State Mutators (Zero writes to projects or journey tables) ---
 
@@ -260,47 +442,142 @@ export const ResumeBuilderPage = () => {
   return (
     <div style={{ padding: '2.5rem 0 5rem 0' }}>
       <div className="container">
-        {/* Header Breadcrumb & Context */}
-        <div style={{ marginBottom: '2rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.35rem' }}>
-            <span className="badge-dept terracotta">Phase 6 Part B</span>
-            <span className="badge-dept">Resume Builder</span>
-            <span
-              style={{
-                fontSize: '0.75rem',
-                backgroundColor: 'var(--color-warm-ivory-light)',
-                border: '1px solid var(--border-subtle)',
-                padding: '0.15rem 0.5rem',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-muted)'
-              }}
-            >
-              In-Memory Editor State
-            </span>
+        {/* Header Breadcrumb, Context & Save Action */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1.5rem', marginBottom: '2rem' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
+              <span className="badge-dept terracotta">Phase 6 Part B</span>
+              <span className="badge-dept">Resume Builder</span>
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  backgroundColor: isSavedDraft ? '#E6F4EA' : 'var(--color-warm-ivory-light)',
+                  border: `1px solid ${isSavedDraft ? '#CEEAD6' : 'var(--border-subtle)'}`,
+                  color: isSavedDraft ? '#137333' : 'var(--text-muted)',
+                  padding: '0.15rem 0.5rem',
+                  borderRadius: 'var(--radius-sm)',
+                  fontWeight: 500
+                }}
+                data-testid="draft-source-status"
+              >
+                {isSavedDraft ? 'Saved Draft' : 'Auto-Populated Draft'}
+              </span>
+              {lastSavedAt && (
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }} data-testid="last-saved-timestamp">
+                  Saved {new Date(lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+            </div>
+            <h1 className="font-serif" style={{ fontSize: '2.25rem', marginBottom: '0.4rem' }}>
+              Collegiate Resume Builder
+            </h1>
+            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', maxWidth: '720px', lineHeight: 1.6 }}>
+              Generated directly from your authentic Mentra Journey milestones and portfolio projects.
+              Edits and reordering exist solely within this resume layer and do not modify your source records.
+            </p>
           </div>
-          <h1 className="font-serif" style={{ fontSize: '2.25rem', marginBottom: '0.4rem' }}>
-            Collegiate Resume Builder
-          </h1>
-          <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', maxWidth: '720px', lineHeight: 1.6 }}>
-            Generated directly from your authentic Mentra Journey milestones and portfolio projects.
-            Edits and reordering exist solely within this resume layer and do not modify your source records.
-          </p>
+
+          {/* Action Button: Save Draft */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button
+              id="save-draft-button"
+              data-testid="save-draft-button"
+              type="button"
+              onClick={handleSaveDraft}
+              disabled={isSaving || Boolean(loadError)}
+              className="btn btn-primary"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                minWidth: '135px',
+                justifyContent: 'center',
+                cursor: (isSaving || Boolean(loadError)) ? 'not-allowed' : 'pointer',
+                opacity: (isSaving || Boolean(loadError)) ? 0.65 : 1
+              }}
+              aria-label={isSaving ? 'Saving resume draft...' : 'Save resume draft to resume_drafts'}
+            >
+              {isSaving ? (
+                <>
+                  <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles size={14} />
+                  <span>Save Draft</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
-        {error && (
-          <div className="notice-box error" style={{ marginBottom: '2rem' }} role="alert">
+        {/* Load Error Notice */}
+        {loadError && (
+          <div className="notice-box error" style={{ marginBottom: '2rem' }} role="alert" data-testid="load-error-banner">
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <AlertCircle size={18} />
-              <span>{error}</span>
+              <span>{loadError}</span>
             </div>
+            <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: 'var(--text-secondary)', marginBottom: 0 }}>
+              To protect your existing saved resume draft from being accidentally overwritten, saving is disabled while in this error state.
+            </p>
             <button
-              onClick={loadSourceRecords}
+              onClick={loadDraftOrSourceRecords}
               className="btn btn-secondary btn-sm"
               style={{ marginTop: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
             >
               <RefreshCw size={13} />
-              <span>Retry Loading Records</span>
+              <span>Retry Loading Saved Draft</span>
             </button>
+          </div>
+        )}
+
+        {/* Save Success Banner */}
+        {saveSuccess && (
+          <div
+            className="notice-box success"
+            style={{
+              marginBottom: '2rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              backgroundColor: '#E6F4EA',
+              border: '1px solid #CEEAD6',
+              color: '#137333',
+              padding: '0.75rem 1rem',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '0.875rem'
+            }}
+            role="status"
+            data-testid="save-success-banner"
+          >
+            <CheckCircle2 size={16} style={{ color: '#137333', flexShrink: 0 }} />
+            <span>Resume draft saved successfully to your Mentra Collegiate profile!</span>
+          </div>
+        )}
+
+        {/* Save Error Banner */}
+        {saveError && (
+          <div
+            className="notice-box error"
+            style={{
+              marginBottom: '2rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              backgroundColor: '#FCE8E6',
+              border: '1px solid #FAD2CF',
+              color: '#C5221F',
+              padding: '0.75rem 1rem',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '0.875rem'
+            }}
+            role="alert"
+            data-testid="save-error-banner"
+          >
+            <AlertCircle size={16} style={{ color: '#C5221F', flexShrink: 0 }} />
+            <span>{saveError}</span>
           </div>
         )}
 
@@ -1212,7 +1489,7 @@ export const ResumeBuilderPage = () => {
               </div>
             </div>
 
-            {/* Step 7 & 8 Boundary Notice */}
+            {/* Step 7 Persistence Active & Step 8 Notice */}
             <div
               style={{
                 marginTop: '1rem',
@@ -1228,7 +1505,9 @@ export const ResumeBuilderPage = () => {
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 <Info size={14} style={{ color: 'var(--color-terracotta)', flexShrink: 0 }} />
-                <span>Step 6 in-memory editor active. Draft persistence (Step 7) and PDF export (Step 8) are upcoming steps.</span>
+                <span>
+                  Draft persistence active (saved to <code>resume_drafts</code>). PDF export (Step 8) is the upcoming step.
+                </span>
               </div>
             </div>
           </div>
