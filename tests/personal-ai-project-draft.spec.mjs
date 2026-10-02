@@ -1,7 +1,7 @@
 /**
- * Mentra Phase 6 Part A, Build Order Step 1 Verification Suite
+ * Mentra Phase 6 Part A, Personal AI Groq Verification Suite
  *
- * Exercises the actual production Personal AI Edge Function handler:
+ * Exercises the production Personal AI Edge Function handler switched to Groq:
  * 1. Preserves existing chat behavior and { reply, model } contract when mode is omitted or 'chat'
  * 2. Returns structured draft shape { draft: { title, description, tags }, model } in 'project_draft' mode
  * 3. Enforces Phase 4 tag normalization (lowercase, trim, max 24 chars, /^[a-z0-9 -]+$/, deduplication, max 6)
@@ -9,7 +9,9 @@
  * 5. Rejects unsupported modes with 400 BAD_REQUEST
  * 6. Validates project prompt length and required content
  * 7. Returns clear 502 errors on missing/malformed model output without fabricating fallback data
- * 8. Preserves authentication, rate limiting, and mentor verification boundaries
+ * 8. Preserves authentication, durable rate limiting, and mentor verification boundaries
+ * 9. Honest error reporting: reports upstream Groq failures as errors without canned chat fallbacks
+ * 10. Validates Groq OpenAI-compatible request construction, headers, payloads, and response contracts
  */
 
 import { register } from 'node:module';
@@ -31,6 +33,7 @@ register(
 
 // Polyfill Deno environment for test runtime
 const mockEnvVars = {
+  GROQ_API_KEY: 'mock-groq-key',
   GEMINI_API_KEY: 'mock-gemini-key',
   SUPABASE_URL: 'https://mock-supabase.mentra.internal',
   SUPABASE_ANON_KEY: 'mock-anon-key',
@@ -46,7 +49,7 @@ globalThis.Deno = {
 };
 
 // Import production handler and helpers
-const { handleRequest, normalizeProjectTags, GEMINI_MODEL } = await import(
+const { handleRequest, normalizeProjectTags, GROQ_MODEL } = await import(
   '../supabase/functions/personal-ai/index.ts'
 );
 
@@ -73,8 +76,8 @@ async function test(name, fn) {
 }
 
 // Mock HTTP Fetch Boundary
-let geminiResponseMock = null;
-let lastGeminiRequest = null;
+let groqResponseMock = null;
+let lastGroqRequest = null;
 let rateLimitAllowed = true;
 let userRole = 'student';
 let isVerified = true;
@@ -85,22 +88,22 @@ function setupMockFetch() {
   globalThis.fetch = async (url, options = {}) => {
     const urlStr = String(url);
 
-    // Mock Gemini API
-    if (urlStr.includes('generativelanguage.googleapis.com')) {
+    // Mock Groq API
+    if (urlStr.includes('api.groq.com')) {
       let parsedBody = null;
       try {
         parsedBody = typeof options?.body === 'string' ? JSON.parse(options.body) : options?.body;
       } catch {}
-      lastGeminiRequest = {
+      lastGroqRequest = {
         url: urlStr,
         method: options?.method,
         headers: options?.headers || {},
         body: parsedBody,
       };
-      if (typeof geminiResponseMock === 'function') {
-        return geminiResponseMock(url, options);
+      if (typeof groqResponseMock === 'function') {
+        return groqResponseMock(url, options);
       }
-      return new Response(JSON.stringify(geminiResponseMock), {
+      return new Response(JSON.stringify(groqResponseMock), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -190,7 +193,7 @@ function createRequest(body, token = 'valid-token') {
 // Test Execution
 // ---------------------------------------------------------
 console.log('======================================================================');
-console.log('  MENTRA PHASE 6 PART A, STEP 1 — PERSONAL AI PROJECT DRAFT SUITE');
+console.log('  MENTRA PERSONAL AI GROQ MIGRATION — VERIFICATION SUITE');
 console.log('======================================================================');
 
 setupMockFetch();
@@ -258,11 +261,12 @@ try {
 
   // Test 3: Backward compatibility - Default conversational chat when mode is omitted
   await test('Preserves default conversational chat contract when mode is omitted', async () => {
-    geminiResponseMock = {
-      candidates: [
+    groqResponseMock = {
+      choices: [
         {
-          content: {
-            parts: [{ text: 'Here is structured advice on your academic research roadmap.' }],
+          message: {
+            role: 'assistant',
+            content: 'Here is structured advice on your academic research roadmap.',
           },
         },
       ],
@@ -272,17 +276,18 @@ try {
     assert(res.status === 200, 'Returns HTTP 200');
     const json = await res.json();
     assert(json.reply === 'Here is structured advice on your academic research roadmap.', 'Returns reply string');
-    assert(json.model === 'gemini-3.8-flash', 'Identifies model as gemini-3.8-flash');
+    assert(json.model === GROQ_MODEL, 'Identifies model as GROQ_MODEL');
     assert(json.draft === undefined, 'Does NOT include draft property in chat response');
   });
 
   // Test 4: Backward compatibility - Explicit mode: 'chat'
   await test('Preserves conversational chat contract when mode is explicitly "chat"', async () => {
-    geminiResponseMock = {
-      candidates: [
+    groqResponseMock = {
+      choices: [
         {
-          content: {
-            parts: [{ text: 'Faculty guidance on project milestones.' }],
+          message: {
+            role: 'assistant',
+            content: 'Faculty guidance on project milestones.',
           },
         },
       ],
@@ -294,26 +299,23 @@ try {
     assert(res.status === 200, 'Returns HTTP 200');
     const json = await res.json();
     assert(json.reply === 'Faculty guidance on project milestones.', 'Returns reply string');
-    assert(json.model === 'gemini-3.8-flash', 'Returns model property');
+    assert(json.model === GROQ_MODEL, 'Returns model property');
     assert(json.draft === undefined, 'No draft property in chat response');
   });
 
   // Test 5: Valid project-draft response shape and tag normalization
   await test('Generates structured project draft with valid title, description, and normalized tags', async () => {
-    geminiResponseMock = {
-      candidates: [
+    groqResponseMock = {
+      choices: [
         {
-          content: {
-            parts: [
-              {
-                text: JSON.stringify({
-                  title: 'Decentralized Academic Identity System',
-                  description:
-                    'A blockchain-powered verification protocol enabling collegiate scholars to cryptographically attest credentials.',
-                  tags: ['Blockchain', 'Identity', 'Web3-Auth', 'tag#invalid', '  SMART CONTRACTS  '],
-                }),
-              },
-            ],
+          message: {
+            role: 'assistant',
+            content: JSON.stringify({
+              title: 'Decentralized Academic Identity System',
+              description:
+                'A blockchain-powered verification protocol enabling collegiate scholars to cryptographically attest credentials.',
+              tags: ['Blockchain', 'Identity', 'Web3-Auth', 'tag#invalid', '  SMART CONTRACTS  '],
+            }),
           },
         },
       ],
@@ -347,24 +349,21 @@ try {
       'Sanitizes and normalizes draft tags adhering strictly to Phase 4 rules'
     );
     assert(json.draft.visibility === undefined, 'Strict boundary: draft does NOT contain visibility');
-    assert(json.model === 'gemini-3.8-flash', 'Identifies model as gemini-3.8-flash');
+    assert(json.model === GROQ_MODEL, 'Identifies model as GROQ_MODEL');
   });
 
   // Test 6: Accepts prompt in body.message if prompt property is absent in project_draft mode
   await test('Accepts project prompt via message property when prompt property is omitted', async () => {
-    geminiResponseMock = {
-      candidates: [
+    groqResponseMock = {
+      choices: [
         {
-          content: {
-            parts: [
-              {
-                text: JSON.stringify({
-                  title: 'AI Lab Scheduler',
-                  description: 'Automated GPU cluster allocation for university research labs.',
-                  tags: ['ai', 'gpu', 'scheduling'],
-                }),
-              },
-            ],
+          message: {
+            role: 'assistant',
+            content: JSON.stringify({
+              title: 'AI Lab Scheduler',
+              description: 'Automated GPU cluster allocation for university research labs.',
+              tags: ['ai', 'gpu', 'scheduling'],
+            }),
           },
         },
       ],
@@ -403,17 +402,14 @@ try {
     assert(longJson.error === 'MESSAGE_TOO_LONG', 'Error code is MESSAGE_TOO_LONG');
   });
 
-  // Test 8: Strips markdown code fences from AI model output
+  // Test 8: Strips markdown code fences when model outputs wrapped JSON
   await test('Strips markdown code fences when model outputs wrapped JSON', async () => {
-    geminiResponseMock = {
-      candidates: [
+    groqResponseMock = {
+      choices: [
         {
-          content: {
-            parts: [
-              {
-                text: '```json\n{\n  "title": "Robotics Vision Navigator",\n  "description": "SLAM navigation package.",\n  "tags": ["robotics", "slam"]\n}\n```',
-              },
-            ],
+          message: {
+            role: 'assistant',
+            content: '```json\n{\n  "title": "Robotics Vision Navigator",\n  "description": "SLAM navigation package.",\n  "tags": ["robotics", "slam"]\n}\n```',
           },
         },
       ],
@@ -429,10 +425,10 @@ try {
   });
 
   // Test 9: Malformed and missing AI output handling - No fabricated data
-  await test('Returns 502 error without fabricating fallback content on malformed output', async () => {
+  await test('Returns 502 error without fabricating fallback content on malformed output or provider error', async () => {
     // 9a. Non-JSON string from model
-    geminiResponseMock = {
-      candidates: [{ content: { parts: [{ text: 'I am not returning JSON today!' }] } }],
+    groqResponseMock = {
+      choices: [{ message: { role: 'assistant', content: 'I am not returning JSON today!' } }],
     };
     const malformedRes = await handleRequest(
       createRequest({ mode: 'project_draft', prompt: 'Any prompt' })
@@ -443,11 +439,12 @@ try {
     assert(!malformedJson.draft, 'Does NOT fabricate fallback draft');
 
     // 9b. Missing title in model JSON
-    geminiResponseMock = {
-      candidates: [
+    groqResponseMock = {
+      choices: [
         {
-          content: {
-            parts: [{ text: JSON.stringify({ description: 'A project with no title', tags: ['ai'] }) }],
+          message: {
+            role: 'assistant',
+            content: JSON.stringify({ description: 'A project with no title', tags: ['ai'] }),
           },
         },
       ],
@@ -461,11 +458,12 @@ try {
     assert(!missingTitleJson.draft, 'Does NOT fabricate fallback title');
 
     // 9c. Missing description in model JSON
-    geminiResponseMock = {
-      candidates: [
+    groqResponseMock = {
+      choices: [
         {
-          content: {
-            parts: [{ text: JSON.stringify({ title: 'A Project Title', tags: ['ai'] }) }],
+          message: {
+            role: 'assistant',
+            content: JSON.stringify({ title: 'A Project Title', tags: ['ai'] }),
           },
         },
       ],
@@ -476,11 +474,12 @@ try {
     assert(missingDescRes.status === 502, 'Returns HTTP 502 when description is missing');
 
     // 9d. Missing tags array in model JSON
-    geminiResponseMock = {
-      candidates: [
+    groqResponseMock = {
+      choices: [
         {
-          content: {
-            parts: [{ text: JSON.stringify({ title: 'A Title', description: 'A Desc' }) }],
+          message: {
+            role: 'assistant',
+            content: JSON.stringify({ title: 'A Title', description: 'A Desc' }),
           },
         },
       ],
@@ -491,7 +490,7 @@ try {
     assert(missingTagsRes.status === 502, 'Returns HTTP 502 when tags array is missing');
 
     // 9e. Empty response from model
-    geminiResponseMock = { candidates: [{ content: { parts: [{ text: '   ' }] } }] };
+    groqResponseMock = { choices: [{ message: { role: 'assistant', content: '   ' } }] };
     const emptyRes = await handleRequest(
       createRequest({ mode: 'project_draft', prompt: 'Any prompt' })
     );
@@ -499,23 +498,23 @@ try {
     const emptyJson = await emptyRes.json();
     assert(emptyJson.error === 'EMPTY_RESPONSE', 'Error code is EMPTY_RESPONSE');
 
-    // 9f. Upstream Gemini API error
-    geminiResponseMock = () =>
-      new Response(JSON.stringify({ error: { message: 'Quota exceeded for project' } }), {
+    // 9f. Upstream Groq API error
+    groqResponseMock = () =>
+      new Response(JSON.stringify({ error: { message: 'Rate limit reached for model' } }), {
         status: 429,
         headers: { 'Content-Type': 'application/json' },
       });
     const upstreamErrRes = await handleRequest(
       createRequest({ mode: 'project_draft', prompt: 'Any prompt' })
     );
-    assert(upstreamErrRes.status === 502, 'Upstream Gemini error returns HTTP 502');
+    assert(upstreamErrRes.status === 502, 'Upstream Groq error returns HTTP 502');
     const upstreamJson = await upstreamErrRes.json();
-    assert(upstreamJson.error === 'GEMINI_API_ERROR', 'Error code is GEMINI_API_ERROR');
+    assert(upstreamJson.error === 'GROQ_API_ERROR', 'Error code is GROQ_API_ERROR');
     assert(!upstreamJson.draft, 'Never fabricates fallback draft on upstream error');
   });
 
   // Test 10: Authentication, Authorization & Rate Limit Enforcement
-  await test('Preserves authentication, rate limiting, and verification boundaries', async () => {
+  await test('Preserves authentication, durable rate limiting, and verification boundaries', async () => {
     // Missing Bearer token
     const unauthReq = new Request('https://edge.mentra.internal/personal-ai', {
       method: 'POST',
@@ -570,20 +569,21 @@ try {
     const getJson = await getRes.json();
     assert(getJson.function === 'personal-ai', 'Health check identifies function');
     assert(getJson.configured === true, 'Identifies as configured');
-    assert(getJson.model === 'gemini-3.8-flash', 'Health check identifies model as gemini-3.8-flash');
+    assert(getJson.model === GROQ_MODEL, 'Health check identifies model as GROQ_MODEL');
   });
 
   // Test 12: Production request construction, headers, payloads, and response contracts for chat and draft modes
-  await test('Verifies production Gemini request construction, headers, and response shapes for chat and draft modes', async () => {
-    assert(GEMINI_MODEL === 'gemini-3.8-flash', 'Exported GEMINI_MODEL constant is gemini-3.8-flash');
+  await test('Verifies production Groq request construction, headers, and response shapes for chat and draft modes', async () => {
+    assert(GROQ_MODEL === 'openai/gpt-oss-120b', 'Exported GROQ_MODEL constant is openai/gpt-oss-120b');
 
     // 12a. Conversational Chat Mode
-    lastGeminiRequest = null;
-    geminiResponseMock = {
-      candidates: [
+    lastGroqRequest = null;
+    groqResponseMock = {
+      choices: [
         {
-          content: {
-            parts: [{ text: 'Grounded mentorship guidance.' }],
+          message: {
+            role: 'assistant',
+            content: 'Grounded mentorship guidance.',
           },
         },
       ],
@@ -608,56 +608,72 @@ try {
       JSON.stringify(Object.keys(chatJson).sort()) === JSON.stringify(['model', 'reply']),
       'Chat response contract is strictly { reply, model }'
     );
-    assert(chatJson.model === GEMINI_MODEL, 'Chat response identifies GEMINI_MODEL (gemini-3.8-flash)');
+    assert(chatJson.model === GROQ_MODEL, 'Chat response identifies GROQ_MODEL (openai/gpt-oss-120b)');
     assert(chatJson.reply === 'Grounded mentorship guidance.', 'Chat reply matches candidate text');
 
-    // Verify chat production request construction sent to Google Gemini
+    // Verify chat production request construction sent to Groq
     assert(
-      lastGeminiRequest?.url ===
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
-      'Chat calls stable gemini-3.8-flash:generateContent endpoint'
+      lastGroqRequest?.url === 'https://api.groq.com/openai/v1/chat/completions',
+      'Chat calls Groq OpenAI-compatible chat/completions endpoint'
     );
-    assert(lastGeminiRequest?.method === 'POST', 'Chat HTTP method is POST');
+    assert(lastGroqRequest?.method === 'POST', 'Chat HTTP method is POST');
     assert(
-      lastGeminiRequest?.headers?.['Content-Type'] === 'application/json',
+      lastGroqRequest?.headers?.['Content-Type'] === 'application/json',
       'Chat Content-Type is application/json'
     );
     assert(
-      lastGeminiRequest?.headers?.['x-goog-api-key'] === 'mock-gemini-key',
-      'Chat passes x-goog-api-key header'
+      lastGroqRequest?.headers?.['Authorization'] === 'Bearer mock-groq-key',
+      'Chat passes Authorization: Bearer mock-groq-key header'
     );
     assert(
-      Boolean(lastGeminiRequest?.body?.systemInstruction?.parts?.[0]?.text),
-      'Chat includes populated systemInstruction'
+      lastGroqRequest?.body?.model === GROQ_MODEL,
+      'Chat requests configured GROQ_MODEL'
     );
     assert(
-      Array.isArray(lastGeminiRequest?.body?.contents) && lastGeminiRequest.body.contents.length === 3,
-      'Chat contents includes 2 history turns and 1 current user message'
+      Array.isArray(lastGroqRequest?.body?.messages) && lastGroqRequest.body.messages.length === 4,
+      'Chat messages includes 1 system instruction, 2 history turns, and 1 current user message'
     );
     assert(
-      lastGeminiRequest?.body?.generationConfig?.temperature === 0.7,
-      'Chat generationConfig temperature is 0.7'
+      lastGroqRequest?.body?.messages[0]?.role === 'system' &&
+        Boolean(lastGroqRequest?.body?.messages[0]?.content),
+      'Chat messages starts with system instruction'
     );
     assert(
-      lastGeminiRequest?.body?.generationConfig?.maxOutputTokens === 1024,
-      'Chat generationConfig maxOutputTokens is 1024'
+      lastGroqRequest?.body?.messages[1]?.role === 'user' &&
+        lastGroqRequest?.body?.messages[1]?.content === 'What is agile development?',
+      'Chat messages preserves first user history turn'
+    );
+    assert(
+      lastGroqRequest?.body?.messages[2]?.role === 'assistant' &&
+        lastGroqRequest?.body?.messages[2]?.content === 'Agile development is an iterative approach.',
+      'Chat messages preserves assistant history turn'
+    );
+    assert(
+      lastGroqRequest?.body?.messages[3]?.role === 'user' &&
+        lastGroqRequest?.body?.messages[3]?.content === 'How do I organize sprint retrospective milestones?',
+      'Chat messages ends with current user prompt'
+    );
+    assert(
+      lastGroqRequest?.body?.temperature === 0.7,
+      'Chat temperature is 0.7'
+    );
+    assert(
+      lastGroqRequest?.body?.max_completion_tokens === 1024,
+      'Chat max_completion_tokens is 1024'
     );
 
     // 12b. Structured Project-Draft Mode
-    lastGeminiRequest = null;
-    geminiResponseMock = {
-      candidates: [
+    lastGroqRequest = null;
+    groqResponseMock = {
+      choices: [
         {
-          content: {
-            parts: [
-              {
-                text: JSON.stringify({
-                  title: 'Embedded Vision Verification',
-                  description: 'A formal verification pipeline for lightweight vision models on edge microcontrollers.',
-                  tags: ['Embedded-Vision', 'Formal-Methods', 'Microcontrollers'],
-                }),
-              },
-            ],
+          message: {
+            role: 'assistant',
+            content: JSON.stringify({
+              title: 'Embedded Vision Verification',
+              description: 'A formal verification pipeline for lightweight vision models on edge microcontrollers.',
+              tags: ['Embedded-Vision', 'Formal-Methods', 'Microcontrollers'],
+            }),
           },
         },
       ],
@@ -682,7 +698,7 @@ try {
       JSON.stringify(Object.keys(draftJson.draft).sort()) === JSON.stringify(['description', 'tags', 'title']),
       'Project draft object strictly contains { title, description, tags }'
     );
-    assert(draftJson.model === GEMINI_MODEL, 'Project draft identifies GEMINI_MODEL (gemini-3.8-flash)');
+    assert(draftJson.model === GROQ_MODEL, 'Project draft identifies GROQ_MODEL (openai/gpt-oss-120b)');
     assert(draftJson.draft.title === 'Embedded Vision Verification', 'Draft title matches');
     assert(
       draftJson.draft.description ===
@@ -695,42 +711,103 @@ try {
       'Draft tags are correctly sanitized and normalized'
     );
 
-    // Verify project-draft production request construction sent to Google Gemini
+    // Verify project-draft production request construction sent to Groq
     assert(
-      lastGeminiRequest?.url ===
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
-      'Draft calls stable gemini-3.8-flash:generateContent endpoint'
+      lastGroqRequest?.url === 'https://api.groq.com/openai/v1/chat/completions',
+      'Draft calls Groq OpenAI-compatible chat/completions endpoint'
     );
-    assert(lastGeminiRequest?.method === 'POST', 'Draft HTTP method is POST');
+    assert(lastGroqRequest?.method === 'POST', 'Draft HTTP method is POST');
     assert(
-      lastGeminiRequest?.headers?.['Content-Type'] === 'application/json',
+      lastGroqRequest?.headers?.['Content-Type'] === 'application/json',
       'Draft Content-Type is application/json'
     );
     assert(
-      lastGeminiRequest?.headers?.['x-goog-api-key'] === 'mock-gemini-key',
-      'Draft passes x-goog-api-key header'
+      lastGroqRequest?.headers?.['Authorization'] === 'Bearer mock-groq-key',
+      'Draft passes Authorization: Bearer mock-groq-key header'
     );
     assert(
-      Boolean(lastGeminiRequest?.body?.systemInstruction?.parts?.[0]?.text),
-      'Draft includes structured draft systemInstruction'
+      lastGroqRequest?.body?.model === GROQ_MODEL,
+      'Draft requests configured GROQ_MODEL'
     );
     assert(
-      lastGeminiRequest?.body?.contents?.[0]?.parts?.[0]?.text ===
-        'Build a formal verification pipeline for vision models on microcontrollers',
-      'Draft contents contains user prompt'
+      lastGroqRequest?.body?.messages?.[0]?.role === 'system' &&
+        Boolean(lastGroqRequest?.body?.messages?.[0]?.content),
+      'Draft includes structured draft systemInstruction in messages'
     );
     assert(
-      lastGeminiRequest?.body?.generationConfig?.responseMimeType === 'application/json',
-      'Draft generationConfig enforces responseMimeType: "application/json"'
+      lastGroqRequest?.body?.messages?.[1]?.role === 'user' &&
+        lastGroqRequest?.body?.messages?.[1]?.content ===
+          'Build a formal verification pipeline for vision models on microcontrollers',
+      'Draft messages contains user prompt'
     );
     assert(
-      lastGeminiRequest?.body?.generationConfig?.temperature === 0.7,
-      'Draft generationConfig temperature is 0.7'
+      lastGroqRequest?.body?.response_format?.type === 'json_object',
+      'Draft enforces response_format: { type: "json_object" }'
     );
     assert(
-      lastGeminiRequest?.body?.generationConfig?.maxOutputTokens === 1024,
-      'Draft generationConfig maxOutputTokens is 1024'
+      lastGroqRequest?.body?.temperature === 0.7,
+      'Draft temperature is 0.7'
     );
+    assert(
+      lastGroqRequest?.body?.max_completion_tokens === 1024,
+      'Draft max_completion_tokens is 1024'
+    );
+  });
+
+  // Test 13: Removal of canned chat fallback on upstream provider errors
+  await test('Chat mode reports upstream provider failures honestly without canned fallback responses', async () => {
+    // 13a. Provider rate limit error (429)
+    groqResponseMock = () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            message: 'Rate limit reached for model `openai/gpt-oss-120b` in organization `org_xxx` on tokens per minute (TPM).',
+            type: 'tokens',
+            code: 'rate_limit_exceeded',
+          },
+        }),
+        {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+
+    const rateErrRes = await handleRequest(
+      createRequest({ mode: 'chat', message: 'Can you critique my system design?' })
+    );
+
+    assert(rateErrRes.status === 502, 'Chat returns HTTP 502 when Groq encounters rate limit / quota error');
+    const rateErrJson = await rateErrRes.json();
+    assert(rateErrJson.error === 'GROQ_API_ERROR', 'Returns GROQ_API_ERROR error code');
+    assert(
+      rateErrJson.message.includes('Rate limit reached for model'),
+      'Propagates upstream Groq error message'
+    );
+    assert(rateErrJson.reply === undefined, 'Does NOT return canned or fabricated AI reply');
+
+    // 13b. Provider internal server error (500)
+    groqResponseMock = () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            message: 'Internal server error processing request.',
+            type: 'server_error',
+          },
+        }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+
+    const serverErrRes = await handleRequest(
+      createRequest({ mode: 'chat', message: 'Help me plan next week tasks.' })
+    );
+
+    assert(serverErrRes.status === 502, 'Chat returns HTTP 502 on Groq 500 error');
+    const serverErrJson = await serverErrRes.json();
+    assert(serverErrJson.error === 'GROQ_API_ERROR', 'Error code is GROQ_API_ERROR');
+    assert(serverErrJson.reply === undefined, 'No fake reply is returned on provider failure');
   });
 
 } finally {
