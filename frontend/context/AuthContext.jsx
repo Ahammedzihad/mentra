@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { isValidProgram, isValidSpecialization } from '../lib/academicPrograms';
+import { normalizeSkillsList, normalizeAchievementsList } from '../lib/profileSelfReported';
 
 const AuthContext = createContext(null);
 
@@ -26,7 +27,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, full_name, department, course, program, specialization, year, batch, bio, role, is_verified, created_at')
+        .select('id, full_name, department, course, program, specialization, year, batch, bio, skills, achievements, role, is_verified, created_at')
         .eq('id', userId)
         .maybeSingle();
 
@@ -36,8 +37,13 @@ export const AuthProvider = ({ children }) => {
       }
 
       if (data) {
-        setProfile(data);
-        return data;
+        const sanitized = {
+          ...data,
+          skills: Array.isArray(data.skills) ? data.skills : [],
+          achievements: Array.isArray(data.achievements) ? data.achievements : [],
+        };
+        setProfile(sanitized);
+        return sanitized;
       } else {
         // If row doesn't exist yet, we can check auth user metadata as fallback
         const { data: userData } = await supabase.auth.getUser();
@@ -108,12 +114,17 @@ export const AuthProvider = ({ children }) => {
           const { data: inserted, error: insErr } = await supabase
             .from('profiles')
             .upsert([fallbackProfile], { onConflict: 'id' })
-            .select('id, full_name, department, course, program, specialization, year, batch, bio, role, is_verified, created_at')
+            .select('id, full_name, department, course, program, specialization, year, batch, bio, skills, achievements, role, is_verified, created_at')
             .maybeSingle();
 
           if (!insErr && inserted) {
-            setProfile(inserted);
-            return inserted;
+            const sanitizedInserted = {
+              ...inserted,
+              skills: Array.isArray(inserted.skills) ? inserted.skills : [],
+              achievements: Array.isArray(inserted.achievements) ? inserted.achievements : [],
+            };
+            setProfile(sanitizedInserted);
+            return sanitizedInserted;
           }
         } catch {
           // Fallback to local profile object if RLS prevents upsert
@@ -346,7 +357,15 @@ export const AuthProvider = ({ children }) => {
     const trimmedBio = typeof rawBio === 'string' ? rawBio.trim() : null;
     const normalizedBio = trimmedBio || null;
 
-    // 6. Construct strictly allowlisted database payload
+    // 6. Self-reported skills handling (optional; up to 15 entries, max 50 chars each)
+    const rawSkills = updates.skills !== undefined ? updates.skills : (profile?.skills || []);
+    const normalizedSkills = normalizeSkillsList(rawSkills);
+
+    // 7. Self-reported achievements handling (optional; up to 10 entries, max 200 chars each)
+    const rawAchievements = updates.achievements !== undefined ? updates.achievements : (profile?.achievements || []);
+    const normalizedAchievements = normalizeAchievementsList(rawAchievements);
+
+    // 8. Construct strictly allowlisted database payload
     // Role-aware legacy compatibility synchronization:
     // - For students: synchronize legacy department and course fields with program
     // - For mentors and admins: preserve existing faculty/institutional department
@@ -358,6 +377,8 @@ export const AuthProvider = ({ children }) => {
       specialization: normalizedSpec,
       year: normalizedYear,
       bio: normalizedBio,
+      skills: normalizedSkills,
+      achievements: normalizedAchievements,
     };
 
     if (isStudent) {
@@ -369,7 +390,7 @@ export const AuthProvider = ({ children }) => {
       .from('profiles')
       .update(payload)
       .eq('id', user.id)
-      .select('id, full_name, department, course, program, specialization, year, batch, bio, role, is_verified, created_at')
+      .select('id, full_name, department, course, program, specialization, year, batch, bio, skills, achievements, role, is_verified, created_at')
       .maybeSingle();
 
     if (error) {
@@ -382,8 +403,13 @@ export const AuthProvider = ({ children }) => {
     }
 
     // Reflect saved database row into local AuthContext state
-    setProfile(data);
-    return { data, error: null };
+    const sanitizedData = {
+      ...data,
+      skills: Array.isArray(data.skills) ? data.skills : normalizedSkills,
+      achievements: Array.isArray(data.achievements) ? data.achievements : normalizedAchievements,
+    };
+    setProfile(sanitizedData);
+    return { data: sanitizedData, error: null };
   };
 
   // Reset Password for Email: Sends recovery email with dynamic origin redirect

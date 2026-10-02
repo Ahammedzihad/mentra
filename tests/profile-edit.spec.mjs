@@ -1100,6 +1100,277 @@ async function runTests() {
     runAssertion('Admin account DOES NOT render mobile Edit Profile button', (await mobileBtn.count()) === 0);
   });
 
+  // --- SECTION 13: PHASE 5 UPDATE — SELF-REPORTED SKILLS & ACHIEVEMENTS ---
+
+  await test('27: EditProfileModal renders self-reported skills & achievements initialized from profile', async () => {
+    await page.setViewportSize({ width: 1200, height: 800 });
+
+    const studentId = '00000000-0000-0000-0000-000000000030';
+    const studentWithSkills = {
+      id: studentId,
+      full_name: 'Priya Patel',
+      program: 'B.Tech',
+      specialization: 'Cyber Security',
+      year: '2nd Year',
+      bio: 'Collegiate cybersecurity enthusiast.',
+      skills: ['C++', 'Python', 'Node.js'],
+      achievements: ["Dean's Honor Roll 2026", 'HackMIT 2nd Place'],
+      department: 'B.Tech',
+      course: 'B.Tech',
+      batch: '2025-2029',
+      role: 'student',
+      is_verified: true,
+      created_at: '2026-09-01T00:00:00.000Z',
+    };
+    activeProfile = { ...studentWithSkills };
+
+    const studentSession = makeMockSession(studentId, 'priya@mentra.edu', {
+      full_name: 'Priya Patel',
+      role: 'student',
+      program: 'B.Tech',
+      specialization: 'Cyber Security',
+    });
+
+    await page.evaluate(async ({ session }) => {
+      await window.__supabase.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+      });
+      await window.__profileAuth.refreshProfile();
+      window.__profileHarness.setIsOpen(true);
+    }, { session: studentSession });
+
+    await page.locator('div[role="dialog"]').waitFor({ state: 'visible', timeout: 5000 });
+
+    // Check self-reported badges and labels
+    const skillBadges = page.locator('label[for="edit-profile-skill-input"] .badge-dept');
+    runAssertion('Skills label has Self-Reported badge', (await skillBadges.textContent()).includes('Self-Reported'));
+
+    const achievementBadges = page.locator('label[for="edit-profile-achievement-input"] .badge-dept');
+    runAssertion('Achievements label has Self-Reported badge', (await achievementBadges.textContent()).includes('Self-Reported'));
+
+    // Check pre-populated skills
+    runAssertion('Pre-filled 3 skills rendered', (await page.locator('[aria-label="Current self-reported skills"] button').count()) === 3);
+    const renderedSkillTexts = await page.locator('[aria-label="Current self-reported skills"] > span').allInnerTexts();
+    runAssertion('Contains C++', renderedSkillTexts.some(t => t.includes('C++')));
+    runAssertion('Contains Python', renderedSkillTexts.some(t => t.includes('Python')));
+    runAssertion('Contains Node.js', renderedSkillTexts.some(t => t.includes('Node.js')));
+
+    // Check pre-populated achievements
+    const achItems = page.locator('[aria-label="Current self-reported achievements"] button');
+    runAssertion('Pre-filled 2 achievements rendered', (await achItems.count()) === 2);
+    const renderedAchTexts = await page.locator('[aria-label="Current self-reported achievements"] div > span').allInnerTexts();
+    runAssertion("Contains Dean's Honor Roll 2026", renderedAchTexts.some(t => t.includes("Dean's Honor Roll 2026")));
+    runAssertion('Contains HackMIT 2nd Place', renderedAchTexts.some(t => t.includes('HackMIT 2nd Place')));
+  });
+
+  await test('28: Adding a skill trims/collapses whitespace, preserves casing & punctuation, and rejects case-insensitive duplicates', async () => {
+    // Add C# with leading/trailing and internal spaces
+    await page.fill('#edit-profile-skill-input', '   C#   ');
+    await page.click('#btn-add-skill');
+
+    let skillTexts = await page.locator('[aria-label="Current self-reported skills"] > span').allInnerTexts();
+    runAssertion('C# added with punctuation preserved', skillTexts.some(t => t.includes('C#')));
+    runAssertion('Input cleared after adding skill', (await page.locator('#edit-profile-skill-input').inputValue()) === '');
+
+    // Add another skill with display casing & internal whitespace: "  Machine    Learning  "
+    await page.fill('#edit-profile-skill-input', '  Machine    Learning  ');
+    await page.click('#btn-add-skill');
+
+    skillTexts = await page.locator('[aria-label="Current self-reported skills"] > span').allInnerTexts();
+    runAssertion('Machine Learning added with collapsed whitespace', skillTexts.some(t => t.includes('Machine Learning')));
+
+    // Duplicate rejection (case-insensitive: "c++" vs "C++")
+    await page.fill('#edit-profile-skill-input', 'c++');
+    await page.click('#btn-add-skill');
+
+    const errorBox = page.locator('.form-group .notice-box.error');
+    runAssertion('Case-insensitive duplicate skill rejected with error', (await errorBox.innerText()).includes('already been added'));
+    skillTexts = await page.locator('[aria-label="Current self-reported skills"] > span').allInnerTexts();
+    runAssertion('C++ was not added twice', skillTexts.filter(s => s.toLowerCase().includes('c++')).length === 1);
+
+    // Over 50 characters rejection
+    const longSkill = 'A'.repeat(51);
+    await page.fill('#edit-profile-skill-input', longSkill);
+    await page.click('#btn-add-skill');
+    runAssertion('Skill over 50 chars rejected with error', (await errorBox.innerText()).includes('cannot exceed 50 characters'));
+
+    // Clear input
+    await page.fill('#edit-profile-skill-input', '');
+  });
+
+  await test('29: Removing a skill updates the list and enforces 15-skill limit', async () => {
+    // Remove the first skill ('C++')
+    const initialCount = await page.locator('[aria-label="Current self-reported skills"] button').count();
+    await page.click('#remove-skill-0');
+
+    const nextCount = await page.locator('[aria-label="Current self-reported skills"] button').count();
+    runAssertion('Skill removed correctly (count decremented)', nextCount === initialCount - 1);
+    const skillTexts = await page.locator('[aria-label="Current self-reported skills"] > span').allInnerTexts();
+    runAssertion('C++ was removed', !skillTexts.some(t => t.includes('C++')));
+
+    // Add skills until reaching 15
+    const needed = 15 - nextCount;
+    for (let i = 0; i < needed; i++) {
+      await page.fill('#edit-profile-skill-input', `Skill-${i + 1}`);
+      await page.click('#btn-add-skill');
+    }
+    const finalCount = await page.locator('[aria-label="Current self-reported skills"] button').count();
+    runAssertion('Exactly 15 skills present', finalCount === 15);
+
+    // Attempting to add 16th skill is disabled by UI limit
+    runAssertion('Skill input is disabled when 15 skills limit is reached', await page.locator('#edit-profile-skill-input').isDisabled());
+    runAssertion('Add Skill button is disabled when 15 skills limit is reached', await page.locator('#btn-add-skill').isDisabled());
+  });
+
+  await test('30: Achievements validation: trimming, max 200 chars, duplicate prevention, and removal', async () => {
+    // Add achievement with whitespace: "   Published Paper on Zero-Knowledge Proofs   "
+    await page.fill('#edit-profile-achievement-input', '   Published Paper on Zero-Knowledge Proofs   ');
+    await page.click('#btn-add-achievement');
+
+    let achTexts = await page.locator('[aria-label="Current self-reported achievements"] div > span').allInnerTexts();
+    runAssertion('Achievement added trimmed', achTexts.some(t => t.includes('Published Paper on Zero-Knowledge Proofs')));
+
+    // Case-insensitive duplicate rejection
+    await page.fill('#edit-profile-achievement-input', 'published paper on zero-knowledge proofs');
+    await page.click('#btn-add-achievement');
+
+    const errorBox = page.locator('.form-group .notice-box.error');
+    runAssertion('Duplicate achievement rejected', (await errorBox.innerText()).includes('already been added'));
+
+    // Exceeding 200 characters rejection
+    const longAch = 'X'.repeat(201);
+    await page.fill('#edit-profile-achievement-input', longAch);
+    await page.click('#btn-add-achievement');
+    runAssertion('Achievement over 200 chars rejected', (await errorBox.innerText()).includes('cannot exceed 200 characters'));
+    await page.fill('#edit-profile-achievement-input', '');
+
+    // Removal
+    const initialCount = await page.locator('[aria-label="Current self-reported achievements"] button').count();
+    await page.click('#remove-achievement-0');
+    const nextCount = await page.locator('[aria-label="Current self-reported achievements"] button').count();
+    runAssertion('Achievement removed successfully', nextCount === initialCount - 1);
+  });
+
+  await test('31: Submitting profile sends skills and achievements in Supabase PATCH payload and reflects in AuthContext state', async () => {
+    lastInterceptedRequest = null;
+
+    // Submit form
+    await page.click('button[type="submit"]');
+
+    // Wait for success notice
+    await page.locator('.notice-box.success').waitFor({ state: 'visible', timeout: 5000 });
+    runAssertion('Success notice appeared after submit', true);
+
+    runAssertion('Supabase PATCH request was dispatched', lastInterceptedRequest !== null);
+    const payload = lastInterceptedRequest.data;
+    runAssertion('Payload has skills array', Array.isArray(payload.skills));
+    runAssertion('Payload skills has 15 entries', payload.skills.length === 15);
+    runAssertion('Payload has achievements array', Array.isArray(payload.achievements));
+    runAssertion('Payload achievements has 2 entries', payload.achievements.length === 2);
+    runAssertion('Payload achievements contains Published Paper', payload.achievements.some(a => a.includes('Published Paper on Zero-Knowledge Proofs')));
+
+    // Check updated AuthContext state in harness
+    await page.locator('div[role="dialog"]').waitFor({ state: 'detached', timeout: 5000 });
+    const profileJson = await page.locator('#test-state-profile').innerText();
+    const updatedState = JSON.parse(profileJson);
+    runAssertion('AuthContext state has updated skills', updatedState.skills.length === 15);
+    runAssertion('AuthContext state has updated achievements', updatedState.achievements.length === 2);
+  });
+
+  await test('32: Direct updateProfile validation rejects invalid skills/achievements without corrupting existing profile', async () => {
+    // Calling updateProfile with an invalid skill (>50 chars) throws error
+    const errSkill = await page.evaluate(async () => {
+      try {
+        await window.__profileAuth.updateProfile({ skills: ['S'.repeat(51)] });
+        return null;
+      } catch (e) {
+        return e.message;
+      }
+    });
+    runAssertion('updateProfile throws error on skill > 50 chars', errSkill && errSkill.includes('cannot exceed 50 characters'));
+
+    // Calling updateProfile with invalid achievements (>200 chars) throws error
+    const errAch = await page.evaluate(async () => {
+      try {
+        await window.__profileAuth.updateProfile({ achievements: ['A'.repeat(201)] });
+        return null;
+      } catch (e) {
+        return e.message;
+      }
+    });
+    runAssertion('updateProfile throws error on achievement > 200 chars', errAch && errAch.includes('cannot exceed 200 characters'));
+
+    // Calling updateProfile with > 15 skills throws error
+    const errMaxSkills = await page.evaluate(async () => {
+      try {
+        const tooMany = Array.from({ length: 16 }, (_, i) => `Skill-${i}`);
+        await window.__profileAuth.updateProfile({ skills: tooMany });
+        return null;
+      } catch (e) {
+        return e.message;
+      }
+    });
+    runAssertion('updateProfile throws error on > 15 skills', errMaxSkills && errMaxSkills.includes('Maximum 15 skills allowed'));
+
+    // Calling updateProfile with > 10 achievements throws error
+    const errMaxAch = await page.evaluate(async () => {
+      try {
+        const tooMany = Array.from({ length: 11 }, (_, i) => `Ach-${i}`);
+        await window.__profileAuth.updateProfile({ achievements: tooMany });
+        return null;
+      } catch (e) {
+        return e.message;
+      }
+    });
+    runAssertion('updateProfile throws error on > 10 achievements', errMaxAch && errMaxAch.includes('Maximum 10 achievements allowed'));
+
+    // Existing profile state must NOT be corrupted or erased
+    const profileJson = await page.locator('#test-state-profile').innerText();
+    const currentState = JSON.parse(profileJson);
+    runAssertion('State still has 15 valid skills after failed updates', currentState.skills.length === 15);
+    runAssertion('State still has 2 valid achievements after failed updates', currentState.achievements.length === 2);
+  });
+
+  await test('33: Profile loading with missing/null skills and achievements defaults safely to empty arrays', async () => {
+    const rawProfileNoSkills = {
+      id: '00000000-0000-0000-0000-000000000040',
+      full_name: 'Jordan Lee',
+      program: 'BCA',
+      specialization: 'Python Full Stack',
+      year: '1st Year',
+      bio: null,
+      skills: null,
+      achievements: null,
+      department: 'BCA',
+      course: 'BCA',
+      batch: '2026-2030',
+      role: 'student',
+      is_verified: true,
+      created_at: '2026-09-01T00:00:00.000Z',
+    };
+    activeProfile = { ...rawProfileNoSkills };
+
+    const session = makeMockSession(rawProfileNoSkills.id, 'jordan@mentra.edu', {
+      full_name: 'Jordan Lee',
+      role: 'student',
+      program: 'BCA',
+    });
+
+    await page.evaluate(async ({ session }) => {
+      await window.__supabase.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+      });
+      await window.__profileAuth.refreshProfile();
+    }, { session });
+
+    const profileJson = await page.locator('#test-state-profile').innerText();
+    const loadedState = JSON.parse(profileJson);
+    runAssertion('Skills defaults to empty array when null in database', Array.isArray(loadedState.skills) && loadedState.skills.length === 0);
+    runAssertion('Achievements defaults to empty array when null in database', Array.isArray(loadedState.achievements) && loadedState.achievements.length === 0);
+  });
+
   console.log('\n======================================================================');
   console.log(`  ALL ${passedTests}/${totalTests} TESTS PASSED CLEANLY!`);
   console.log('======================================================================\n');
