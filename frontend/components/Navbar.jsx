@@ -245,6 +245,20 @@ export const Navbar = () => {
                 <Sparkles size={14} style={{ color: 'var(--color-terracotta)' }} />
                 <span>Personal AI</span>
               </Link>
+              <Link
+                to="/resume"
+                id="navbar-resume-link"
+                style={{
+                  fontSize: '0.9rem',
+                  fontWeight: isActive('/resume') ? '600' : '500',
+                  color: isActive('/resume') ? 'var(--color-primary-dark)' : 'var(--text-secondary)',
+                  borderBottom: isActive('/resume') ? '2px solid var(--color-terracotta)' : '2px solid transparent',
+                  paddingBottom: '0.25rem',
+                  transition: 'var(--transition-smooth)',
+                }}
+              >
+                Resume Builder
+              </Link>
             </>
           )}
         </nav>
@@ -491,6 +505,18 @@ export const Navbar = () => {
               >
                 <Sparkles size={16} />
                 <span>Personal AI</span>
+              </Link>
+              <Link
+                to="/resume"
+                id="navbar-mobile-resume-link"
+                onClick={() => setMobileMenuOpen(false)}
+                style={{
+                  fontSize: '1rem',
+                  fontWeight: isActive('/resume') ? '600' : '500',
+                  color: isActive('/resume') ? 'var(--color-terracotta)' : 'var(--text-primary)',
+                }}
+              >
+                Resume Builder
               </Link>
             </>
           )}

@@ -26,6 +26,7 @@ import { AuthErrorPage } from './pages/AuthErrorPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { MentorAiPage } from '../ai/mentor/MentorAiPage';
 import { DiscoverPage } from '../features/discovery/DiscoverPage';
+import { ResumeBuilderPage } from '../features/resume/ResumeBuilderPage';
 
 function AuthRecoveryListener() {
   const navigate = useNavigate();
@@ -90,6 +91,14 @@ export function App() {
                 element={
                   <ProtectedRoute allowedRole="student">
                     <AiAdvisorPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/resume"
+                element={
+                  <ProtectedRoute allowedRole="student">
+                    <ResumeBuilderPage />
                   </ProtectedRoute>
                 }
               />

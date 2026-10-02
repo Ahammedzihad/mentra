@@ -17,7 +17,8 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
-  UserCheck
+  UserCheck,
+  FileText
 } from 'lucide-react';
 
 export const StudentDashboard = () => {
@@ -173,6 +174,15 @@ export const StudentDashboard = () => {
               <FolderPlus size={15} />
               <span>Create Project</span>
             </button>
+            <Link
+              to="/resume"
+              id="student-dashboard-resume-link"
+              className="btn btn-secondary btn-sm"
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            >
+              <FileText size={15} style={{ color: 'var(--color-terracotta)' }} />
+              <span>Resume Builder</span>
+            </Link>
           </div>
         </div>
 
