@@ -16,8 +16,10 @@ import {
   Users,
   Check,
   X,
-  Sparkles
+  Sparkles,
+  Edit3
 } from 'lucide-react';
+import { EditProfileModal } from '../../../features/profile/EditProfileModal';
 
 export const MentorDashboard = () => {
   const { user, profile, loading: authLoading, refreshProfile, signOut } = useAuth();
@@ -27,6 +29,7 @@ export const MentorDashboard = () => {
   const [error, setError] = useState(null);
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [actionFeedback, setActionFeedback] = useState(null);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
 
   const isVerified = Boolean(profile?.role === 'mentor' && profile?.is_verified === true);
 
@@ -327,8 +330,8 @@ export const MentorDashboard = () => {
               </p>
             </div>
 
-            {/* Verified Status Pill */}
-            <div>
+            {/* Verified Status Pill & Edit Profile */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
               <div
                 style={{
                   display: 'flex',
@@ -346,6 +349,18 @@ export const MentorDashboard = () => {
                 <ShieldCheck size={18} style={{ color: '#8C6A30' }} />
                 <span>Verified Mentor</span>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsEditProfileOpen(true)}
+                id="mentor-dashboard-edit-profile-btn"
+                className="btn btn-secondary btn-sm"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                title="Edit Academic Profile"
+                aria-label="Edit Academic Profile"
+              >
+                <Edit3 size={14} />
+                <span>Edit Profile</span>
+              </button>
             </div>
           </div>
 
@@ -823,6 +838,10 @@ export const MentorDashboard = () => {
           )}
         </div>
       </div>
+      <EditProfileModal
+        isOpen={isEditProfileOpen}
+        onClose={() => setIsEditProfileOpen(false)}
+      />
     </div>
   );
 };

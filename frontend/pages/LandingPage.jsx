@@ -27,7 +27,7 @@ export const LandingPage = () => {
           <div style={{ maxWidth: '820px' }}>
             <div className="label-academic" style={{ marginBottom: '1.25rem' }}>
               <Compass size={14} />
-              <span>A Trusted Educational College Community</span>
+              <span>A MORE CONNECTED COLLEGIATE EXPERIENCE</span>
             </div>
 
             <h1
@@ -40,7 +40,7 @@ export const LandingPage = () => {
                 letterSpacing: '-0.02em',
               }}
             >
-              More than just college.
+              Make your college journey count.
             </h1>
 
             <p
@@ -52,7 +52,7 @@ export const LandingPage = () => {
                 maxWidth: '680px',
               }}
             >
-              Mentra connects learning, people, projects, communities, and opportunities into one journey.
+              Connect with students, discover meaningful projects, document what you build, and turn your learning into a journey of growth.
             </p>
 
             <div
@@ -104,11 +104,10 @@ export const LandingPage = () => {
           <div style={{ maxWidth: '640px', marginBottom: '3.5rem' }}>
             <span className="label-academic terracotta">The Mentra Ecosystem</span>
             <h2 style={{ marginTop: '0.4rem', marginBottom: '0.85rem' }}>
-              An interconnected collegiate landscape.
+              From learning to meaningful work.
             </h2>
             <p>
-              Traditional academia fragments courses, faculty access, student portfolios, and career pathways.
-              Mentra unifies them into an intentional, dignified ecosystem.
+              Mentra brings learning, people, and projects closer together, helping students connect what they learn with what they create.
             </p>
           </div>
 
@@ -119,7 +118,7 @@ export const LandingPage = () => {
               </div>
               <h3 style={{ fontSize: '1.25rem', marginBottom: '0.6rem' }}>Contextual Learning</h3>
               <p style={{ fontSize: '0.925rem' }}>
-                Bridging syllabus fundamentals with active projects. Learning ceases to be isolated exam preparation and becomes cumulative craft.
+                Connect academic foundations with practical exploration and project-based learning.
               </p>
             </div>
 
@@ -129,7 +128,7 @@ export const LandingPage = () => {
               </div>
               <h3 style={{ fontSize: '1.25rem', marginBottom: '0.6rem' }}>Verified Faculty & Mentors</h3>
               <p style={{ fontSize: '0.925rem' }}>
-                Direct access to professors and recognized advisors without arbitrary barriers. Structured guidance grounded in academic integrity.
+                Discover academic guidance and mentorship where qualified mentors are available.
               </p>
             </div>
 
@@ -139,7 +138,7 @@ export const LandingPage = () => {
               </div>
               <h3 style={{ fontSize: '1.25rem', marginBottom: '0.6rem' }}>Collaborative Projects</h3>
               <p style={{ fontSize: '0.925rem' }}>
-                Interdisciplinary teams uniting designers, engineers, and strategists on substantive initiatives that exist beyond the classroom.
+                Explore projects and connect with students who bring different skills and perspectives.
               </p>
             </div>
           </div>
@@ -152,10 +151,10 @@ export const LandingPage = () => {
           <div style={{ textAlign: 'center', maxWidth: '680px', margin: '0 auto 3.5rem auto' }}>
             <span className="label-academic gold">The Arc of Growth</span>
             <h2 style={{ marginTop: '0.4rem', marginBottom: '0.85rem' }}>
-              The Mentra Student Journey
+              From curiosity to contribution.
             </h2>
             <p>
-              Education is not a series of disconnected tests. It is an intentional progression from nascent curiosity to accomplished leadership.
+              College is more than a series of exams. It is a journey of learning, connecting, building, sharing, discovering, and growing.
             </p>
           </div>
 
@@ -172,32 +171,32 @@ export const LandingPage = () => {
               {
                 step: '01',
                 title: 'Learn',
-                desc: 'Acquiring theoretical rigor, research disciplines, and technical foundations.',
+                desc: 'Build your academic foundations, explore new ideas, and develop essential skills.',
               },
               {
                 step: '02',
                 title: 'Connect',
-                desc: 'Engaging peer cohorts, cross-department colleagues, and faculty mentors.',
+                desc: 'Meet peers, exchange perspectives, and discover opportunities to work together.',
               },
               {
                 step: '03',
                 title: 'Build',
-                desc: 'Translating concepts into tangible prototypes, codebases, and case studies.',
+                desc: 'Turn ideas into projects, prototypes, research, and practical work.',
               },
               {
                 step: '04',
                 title: 'Share',
-                desc: 'Publishing milestones, peer reviews, and departmental symposium presentations.',
+                desc: 'Document your progress, share your work, and learn from constructive feedback.',
               },
               {
                 step: '05',
                 title: 'Discover',
-                desc: 'Identifying specialized niches, emerging research inquiries, and campus needs.',
+                desc: 'Explore new interests, identify meaningful problems, and find your next direction.',
               },
               {
                 step: '06',
                 title: 'Grow',
-                desc: 'Evolving into verified senior mentors, project captains, and collegiate leaders.',
+                desc: 'Strengthen your skills, reflect on your progress, and take on new challenges.',
               },
             ].map((phase) => (
               <div
@@ -242,10 +241,10 @@ export const LandingPage = () => {
                 Departmental Cohorts
               </span>
               <h2 style={{ color: 'var(--text-on-dark)', marginTop: '0.5rem', marginBottom: '1.25rem' }}>
-                Cross-disciplinary fellowship without institutional silos.
+                Different disciplines. Shared ambition.
               </h2>
               <p style={{ color: 'var(--text-on-dark-secondary)', marginBottom: '1.75rem', lineHeight: '1.7' }}>
-                True breakthroughs happen at the intersection of disciplines. At Mentra, computer scientists collaborate with product designers, and management scholars partner with software architects.
+                Meaningful projects can bring together different perspectives, skills, and ways of thinking.
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -337,10 +336,10 @@ export const LandingPage = () => {
           <div style={{ maxWidth: '640px', marginBottom: '3rem' }}>
             <span className="label-academic terracotta">Verified Mentorship</span>
             <h2 style={{ marginTop: '0.4rem', marginBottom: '0.85rem' }}>
-              Scholarly guidance with accountability.
+              Learn with guidance.
             </h2>
             <p>
-              Mentra takes mentorship seriously. Mentor credentials are not self-assigned or vanity badges; they are officially reviewed by campus academic authorities.
+              Mentorship can help students refine their ideas, evaluate their work, and make informed decisions about their academic journey.
             </p>
           </div>
 
@@ -385,14 +384,14 @@ export const LandingPage = () => {
             <div style={{ maxWidth: '580px' }}>
               <span className="label-academic charcoal">Student Projects</span>
               <h2 style={{ marginTop: '0.4rem', marginBottom: '0.5rem' }}>
-                Substantive work, recorded for posterity.
+                See what students are building.
               </h2>
               <p>
-                From distributed systems to human-centered design frameworks, explore what students are building inside the Mentra community.
+                Explore ideas and projects taking shape across disciplines.
               </p>
             </div>
             <Link to="/projects" className="btn btn-secondary btn-sm">
-              <span>View All Projects</span>
+              <span>View all projects</span>
               <ArrowRight size={14} />
             </Link>
           </div>
@@ -456,10 +455,10 @@ export const LandingPage = () => {
             <div>
               <span className="label-academic gold">Opportunities</span>
               <h2 style={{ marginTop: '0.4rem', marginBottom: '1rem' }}>
-                Merit-based doors opened through tangible work.
+                Let meaningful work open new doors.
               </h2>
               <p style={{ marginBottom: '1.5rem', lineHeight: '1.7' }}>
-                Opportunities at Mentra arise organically from the projects you author and the journey milestones you document.
+                Projects, sustained contributions, and shared knowledge can help students discover new academic and professional opportunities.
               </p>
               <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
                 <li style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', fontSize: '0.925rem' }}>
@@ -517,10 +516,10 @@ export const LandingPage = () => {
               Institutional Trust
             </span>
             <h2 style={{ color: 'var(--text-on-dark)', marginTop: '0.4rem', marginBottom: '0.75rem' }}>
-              Engineered for academic integrity.
+              Built for meaningful work, not vanity metrics.
             </h2>
             <p style={{ color: 'var(--text-on-dark-secondary)' }}>
-              Mentra refuses the practices of consumer social media. Our architecture is designed for serious collegiate focus.
+              Mentra is designed to emphasize learning, substantive contributions, and constructive collaboration rather than popularity contests.
             </p>
           </div>
 
@@ -530,7 +529,7 @@ export const LandingPage = () => {
                 Zero Vanity Metrics
               </h4>
               <p style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem' }}>
-                No like counters, popularity feeds, or dopamine-driven algorithms. Recognition is earned through peer review and mentor verification.
+                Focus on meaningful work and contribution rather than likes, popularity, or social comparison.
               </p>
             </div>
 
@@ -539,7 +538,7 @@ export const LandingPage = () => {
                 Institutional Verification
               </h4>
               <p style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem' }}>
-                Mentors cannot self-verify. Mentor credentials undergo institutional review by academic administrators before badges are conferred.
+                Mentor credibility and academic recognition should be grounded in genuine qualifications and appropriate review.
               </p>
             </div>
 
@@ -548,7 +547,7 @@ export const LandingPage = () => {
                 Privacy & Rigor
               </h4>
               <p style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem' }}>
-                Your academic journey is treated as your intellectual portfolio, safeguarded by row-level security and campus-first ethics.
+                Student work deserves thoughtful handling, responsible access, and respect for academic integrity.
               </p>
             </div>
           </div>
@@ -623,7 +622,7 @@ export const LandingPage = () => {
               marginBottom: '1rem',
             }}
           >
-            Begin your journey at Mentra today.
+            Your next step starts here.
           </h2>
           <p
             style={{
@@ -635,7 +634,7 @@ export const LandingPage = () => {
               marginRight: 'auto',
             }}
           >
-            Step into a collegiate fellowship of students, mentors, and collaborative innovation.
+            Explore a project, connect with a peer, or begin documenting what you learn.
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', flexWrap: 'wrap' }}>
             <Link to="/signup" className="btn btn-terracotta" style={{ padding: '0.8rem 1.85rem', fontSize: '1rem' }}>

@@ -20,6 +20,7 @@ import {
   UserCheck,
   FileText
 } from 'lucide-react';
+import { EditProfileModal } from '../../../features/profile/EditProfileModal';
 
 export const StudentDashboard = () => {
   const { user, profile } = useAuth();
@@ -34,6 +35,7 @@ export const StudentDashboard = () => {
   const [editingProject, setEditingProject] = useState(null);
   const [deletingProject, setDeletingProject] = useState(null);
   const [isJourneyModalOpen, setIsJourneyModalOpen] = useState(false);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
 
   const loadStudentData = useCallback(async () => {
     if (!user || !isSupabaseConfigured) {
@@ -183,6 +185,18 @@ export const StudentDashboard = () => {
               <FileText size={15} style={{ color: 'var(--color-terracotta)' }} />
               <span>Resume Builder</span>
             </Link>
+            <button
+              type="button"
+              onClick={() => setIsEditProfileOpen(true)}
+              id="student-dashboard-edit-profile-btn"
+              className="btn btn-secondary btn-sm"
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              title="Edit Academic Profile"
+              aria-label="Edit Academic Profile"
+            >
+              <Edit3 size={15} />
+              <span>Edit Profile</span>
+            </button>
           </div>
         </div>
 
@@ -516,6 +530,10 @@ export const StudentDashboard = () => {
         isOpen={isJourneyModalOpen}
         onClose={() => setIsJourneyModalOpen(false)}
         onEntryAdded={handleJourneyAdded}
+      />
+      <EditProfileModal
+        isOpen={isEditProfileOpen}
+        onClose={() => setIsEditProfileOpen(false)}
       />
     </div>
   );

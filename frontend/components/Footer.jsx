@@ -33,7 +33,7 @@ export const Footer = () => {
               </span>
             </div>
             <p style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.9rem', lineHeight: '1.6' }}>
-              A trusted educational college community connecting students, mentors, projects, mentorship, and student journeys into an integrated fellowship.
+              Mentra Collegiate connects students, learning, projects, and academic communities to support a more connected student journey.
             </p>
           </div>
 
