@@ -5,267 +5,117 @@ export const Footer = () => {
   return (
     <footer
       style={{
-        backgroundColor: '#1C1B19',
-        color: '#F5F0E8',
-        padding: '3.75rem 0 3rem 0',
+        backgroundColor: 'var(--color-primary-dark)',
+        color: 'var(--text-on-dark)',
+        padding: '4rem 0 2.5rem 0',
         marginTop: 'auto',
-        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+        borderTop: '1px solid var(--border-on-dark)',
       }}
     >
-      <div className="container" style={{ maxWidth: '1180px', margin: '0 auto', padding: '0 1.5rem' }}>
+      <div className="container">
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '1.4fr 1fr 1fr 1.1fr 1.3fr',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
             gap: '2.5rem',
-            alignItems: 'start',
-            paddingBottom: '2.5rem',
+            paddingBottom: '3rem',
+            borderBottom: '1px solid var(--border-on-dark)',
           }}
-          className="footer-grid-container"
         >
-          {/* Column 1: Brand & Tagline */}
-          <div>
-            <Link
-              to="/"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'baseline',
-                textDecoration: 'none',
-                marginBottom: '0.85rem',
-              }}
-            >
-              <span
-                className="font-serif"
-                style={{
-                  fontSize: '1.45rem',
-                  fontWeight: 700,
-                  color: '#F5F0E8',
-                  letterSpacing: '-0.02em',
-                }}
-              >
+          {/* Brand & Mission */}
+          <div style={{ maxWidth: '320px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.45rem', marginBottom: '0.85rem' }}>
+              <span className="font-serif" style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-warm-ivory)' }}>
                 Mentra
               </span>
-              <span
-                className="font-serif"
-                style={{
-                  fontSize: '1.35rem',
-                  fontWeight: 400,
-                  color: '#C8BFB3',
-                  marginLeft: '0.35rem',
-                  letterSpacing: '-0.01em',
-                }}
-              >
+              <span style={{ fontSize: '0.7rem', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--color-terracotta)' }}>
                 Collegiate
               </span>
-            </Link>
-            <p
-              style={{
-                color: '#8E877D',
-                fontSize: '0.825rem',
-                lineHeight: '1.5',
-                marginTop: '0.25rem',
-              }}
-            >
-              People. Projects. Perspective. A brighter tomorrow.
+            </div>
+            <p style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.9rem', lineHeight: '1.6' }}>
+              A trusted educational college community connecting students, mentors, projects, mentorship, and student journeys into an integrated fellowship.
             </p>
           </div>
 
-          {/* Column 2: Explore */}
+          {/* Academic Cohorts */}
           <div>
-            <div
-              style={{
-                fontSize: '0.825rem',
-                fontWeight: 600,
-                color: '#FAF7F2',
-                marginBottom: '1rem',
-                letterSpacing: '0.02em',
-              }}
-            >
-              Explore
-            </div>
-            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            <h4 style={{ fontSize: '0.825rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-warm-gold)', marginBottom: '1rem', fontWeight: 600 }}>
+              Academic Cohorts
+            </h4>
+            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              <li style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem' }}>B.Tech — Technology & Computing</li>
+              <li style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem' }}>B.Des — Design & Spatial Systems</li>
+              <li style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem' }}>BBA — Management & Enterprise</li>
+              <li style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem' }}>BCA — Applied Computer Science</li>
+            </ul>
+          </div>
+
+          {/* Platform Exploration */}
+          <div>
+            <h4 style={{ fontSize: '0.825rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-warm-gold)', marginBottom: '1rem', fontWeight: 600 }}>
+              Navigation
+            </h4>
+            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
               <li>
-                <Link to="/" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Overview
+                <Link to="/" style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem', transition: 'color 0.2s' }}>
+                  Overview & Ecosystem
                 </Link>
               </li>
               <li>
-                <Link to="/projects" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Projects
+                <Link to="/projects" style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem', transition: 'color 0.2s' }}>
+                  College Projects Registry
                 </Link>
               </li>
               <li>
-                <Link to="/discover" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Discover
+                <Link to="/journey" style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem', transition: 'color 0.2s' }}>
+                  Student Journey Timeline
                 </Link>
               </li>
               <li>
-                <Link to="/journey" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Journey
+                <Link to="/signup" style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem', transition: 'color 0.2s' }}>
+                  Sign Up for Mentra
                 </Link>
               </li>
             </ul>
           </div>
 
-          {/* Column 3: Community */}
+          {/* Academic Trust Principles */}
           <div>
-            <div
-              style={{
-                fontSize: '0.825rem',
-                fontWeight: 600,
-                color: '#FAF7F2',
-                marginBottom: '1rem',
-                letterSpacing: '0.02em',
-              }}
-            >
-              Community
-            </div>
-            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-              <li>
-                <Link to="/student" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Student Space
-                </Link>
-              </li>
-              <li>
-                <Link to="/mentors" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Browse Mentors
-                </Link>
-              </li>
-              <li>
-                <Link to="/ai" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Personal AI
-                </Link>
-              </li>
-            </ul>
-          </div>
-
-          {/* Column 4: Support */}
-          <div>
-            <div
-              style={{
-                fontSize: '0.825rem',
-                fontWeight: 600,
-                color: '#FAF7F2',
-                marginBottom: '1rem',
-                letterSpacing: '0.02em',
-              }}
-            >
-              Support
-            </div>
-            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-              <li>
-                <a href="#help" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Help Center
-                </a>
-              </li>
-              <li>
-                <a href="#contact" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Contact Us
-                </a>
-              </li>
-              <li>
-                <a href="#guidelines" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Community Guidelines
-                </a>
-              </li>
-              <li>
-                <a href="#privacy" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Privacy Policy
-                </a>
-              </li>
-              <li>
-                <a href="#terms" style={{ color: '#8E877D', fontSize: '0.825rem', textDecoration: 'none', transition: 'color 0.2s' }}>
-                  Terms of Service
-                </a>
-              </li>
-            </ul>
-          </div>
-
-          {/* Column 5: Botanical Icon & Connected Statement */}
-          <div
-            style={{
-              paddingLeft: '1.5rem',
-              borderLeft: '1px solid rgba(255, 255, 255, 0.08)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.75rem',
-            }}
-            className="footer-statement-col"
-          >
-            {/* Botanical gold sprout icon */}
-            <div style={{ color: '#C5A46D' }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M7 20h10" />
-                <path d="M12 20v-8" />
-                <path d="M12 12c-2.5-3-2-6 1-8 2 3 1.5 6-1 8z" />
-                <path d="M8 14c-2-1.5-2.5-4-1-6 2 1.5 2 4 1 6z" />
-              </svg>
-            </div>
-            <p
-              style={{
-                color: '#A39C91',
-                fontSize: '0.825rem',
-                lineHeight: '1.55',
-                fontStyle: 'normal',
-              }}
-            >
-              A more connected collegiate experience for what comes next.
+            <h4 style={{ fontSize: '0.825rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-warm-gold)', marginBottom: '1rem', fontWeight: 600 }}>
+              Pillars of Trust
+            </h4>
+            <p style={{ color: 'var(--text-on-dark-secondary)', fontSize: '0.875rem', lineHeight: '1.6', marginBottom: '0.75rem' }}>
+              Built upon academic rigor, verified faculty guidance, zero commercial advertising, and deliberate human mentorship.
             </p>
-            <div
-              style={{
-                width: '32px',
-                height: '2px',
-                backgroundColor: '#A84B2B',
-                marginTop: '0.25rem',
-              }}
-            />
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-on-dark-secondary)', opacity: 0.8 }}>
+              Learn &bull; Connect &bull; Build &bull; Share &bull; Discover &bull; Grow
+            </div>
           </div>
         </div>
 
         {/* Bottom copyright line */}
         <div
           style={{
-            paddingTop: '1.75rem',
-            borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+            paddingTop: '2rem',
             display: 'flex',
+            flexWrap: 'wrap',
             justifyContent: 'space-between',
             alignItems: 'center',
-            fontSize: '0.75rem',
-            color: '#6E675E',
-            flexWrap: 'wrap',
-            gap: '0.5rem',
+            fontSize: '0.8rem',
+            color: 'var(--text-on-dark-secondary)',
+            gap: '1rem',
           }}
         >
           <div>
-            &copy; {new Date().getFullYear()} Mentra Collegiate. All rights reserved.
+            &copy; {new Date().getFullYear()} Mentra Educational Community. Phase 1 Academic Release.
           </div>
-          <div>
-            A journey, not just a profile.
+          <div style={{ display: 'flex', gap: '1.5rem' }}>
+            <span>Collegiate Fellowship</span>
+            <span>Verified Mentorship</span>
+            <span>Institutional Honor Code</span>
           </div>
         </div>
       </div>
-
-      <style>{`
-        @media (max-width: 900px) {
-          .footer-grid-container {
-            grid-template-columns: repeat(2, 1fr) !important;
-            gap: 2rem !important;
-          }
-          .footer-statement-col {
-            grid-column: 1 / -1;
-            padding-left: 0 !important;
-            border-left: none !important;
-            border-top: 1px solid rgba(255, 255, 255, 0.08);
-            padding-top: 1.5rem;
-          }
-        }
-        @media (max-width: 600px) {
-          .footer-grid-container {
-            grid-template-columns: 1fr !important;
-            gap: 1.75rem !important;
-          }
-        }
-      `}</style>
     </footer>
   );
 };
