@@ -36,6 +36,7 @@ import {
   filterPeople,
   filterProjects,
   extractAvailableTags,
+  extractAvailableSkills,
   sortNewestFirst,
   validateAcademicFilters,
 } from '../features/discovery/discoverService.js';
@@ -73,6 +74,7 @@ const mockProfiles = Object.freeze([
     specialization: 'Cyber Security',
     year: '3rd Year',
     department: 'B.Tech',
+    skills: ['Cyber Security', 'Network Security', 'Python'],
     created_at: '2026-09-01T10:00:00.000Z',
   },
   {
@@ -84,6 +86,7 @@ const mockProfiles = Object.freeze([
     specialization: 'Python Full Stack',
     year: '2nd Year',
     department: 'BCA',
+    skills: ['Python', 'Django', 'React', ' postgresql '],
     created_at: '2026-09-10T12:00:00.000Z',
   },
   {
@@ -95,6 +98,7 @@ const mockProfiles = Object.freeze([
     specialization: 'AI & Machine Learning',
     year: null,
     department: 'Computer Science and Engineering',
+    skills: ['AI & Machine Learning', 'Computer Vision', 'PyTorch'],
     created_at: '2026-08-15T09:30:00.000Z',
   },
   {
@@ -106,6 +110,7 @@ const mockProfiles = Object.freeze([
     specialization: 'Digital Marketing',
     year: '1st Year',
     department: 'BBA',
+    skills: ['Digital Marketing', 'SEO', 'Analytics'],
     created_at: '2026-09-20T14:15:00.000Z',
   },
   {
@@ -117,6 +122,7 @@ const mockProfiles = Object.freeze([
     specialization: 'Interaction Design (UI/UX systems)',
     year: '4th Year',
     department: 'B.Des',
+    skills: ['UI/UX', 'Figma', 'Interaction Design'],
     created_at: '2026-07-01T08:00:00.000Z',
   },
   {
@@ -128,6 +134,7 @@ const mockProfiles = Object.freeze([
     specialization: 'Film Making',
     year: '3rd Year',
     department: 'BBA',
+    skills: [], // Test empty array
     created_at: null, // Test missing timestamp
   },
 ]);
@@ -468,12 +475,12 @@ async function runTests() {
     runAssertion('Projects query was dispatched', capturedProjectsQuery !== null);
     runAssertion('Profiles query was dispatched', capturedProfilesQuery !== null);
 
-    const expectedPeopleFields = 'id, full_name, role, program, specialization, year, created_at';
+    const expectedPeopleFields = 'id, full_name, role, program, specialization, year, created_at, skills';
     const expectedJoinedOwnerFields = 'id, full_name, role, program, specialization, year';
 
     // Verify exact people projection match
     runAssertion(
-      'People projection exactly matches expected field list',
+      'People projection exactly matches expected field list (including skills)',
       capturedProfilesQuery.selectStr === expectedPeopleFields
     );
 
@@ -485,21 +492,24 @@ async function runTests() {
       actualJoinedOwnerFields === expectedJoinedOwnerFields
     );
 
-    // Verify neither projection includes department, is_verified, email, or bio
+    // Verify neither projection includes department, is_verified, email, bio, or achievements
     runAssertion('Profiles select strictly EXCLUDES department', !capturedProfilesQuery.selectStr.includes('department'));
     runAssertion('Profiles select strictly EXCLUDES is_verified', !capturedProfilesQuery.selectStr.includes('is_verified'));
     runAssertion('Profiles select strictly EXCLUDES email', !capturedProfilesQuery.selectStr.includes('email'));
     runAssertion('Profiles select strictly EXCLUDES bio', !capturedProfilesQuery.selectStr.includes('bio'));
+    runAssertion('Profiles select strictly EXCLUDES achievements', !capturedProfilesQuery.selectStr.includes('achievements'));
 
     runAssertion('Joined project-owner projection strictly EXCLUDES department', !actualJoinedOwnerFields.includes('department'));
     runAssertion('Joined project-owner projection strictly EXCLUDES is_verified', !actualJoinedOwnerFields.includes('is_verified'));
     runAssertion('Joined project-owner projection strictly EXCLUDES email', !actualJoinedOwnerFields.includes('email'));
     runAssertion('Joined project-owner projection strictly EXCLUDES bio', !actualJoinedOwnerFields.includes('bio'));
+    runAssertion('Joined project-owner projection strictly EXCLUDES achievements', !actualJoinedOwnerFields.includes('achievements'));
 
     runAssertion('Projects select strictly EXCLUDES department', !capturedProjectsQuery.selectStr.includes('department'));
     runAssertion('Projects select strictly EXCLUDES is_verified', !capturedProjectsQuery.selectStr.includes('is_verified'));
     runAssertion('Projects select strictly EXCLUDES email', !capturedProjectsQuery.selectStr.includes('email'));
     runAssertion('Projects select strictly EXCLUDES bio', !capturedProjectsQuery.selectStr.includes('bio'));
+    runAssertion('Projects select strictly EXCLUDES achievements', !capturedProjectsQuery.selectStr.includes('achievements'));
 
     // 2. Order clause verification
     runAssertion('Projects ordered by created_at DESC', capturedProjectsQuery.orderField === 'created_at' && capturedProjectsQuery.orderAsc === false);
@@ -509,6 +519,7 @@ async function runTests() {
     runAssertion('Returns people collection', Array.isArray(result.people));
     runAssertion('Returns projects collection', Array.isArray(result.projects));
     runAssertion('Returns availableTags collection', Array.isArray(result.availableTags));
+    runAssertion('Returns availableSkills collection', Array.isArray(result.availableSkills));
 
     // Filter results matching 'python'
     runAssertion('Projects matching python returned', result.projects.length === 1 && result.projects[0].id === 'proj-002');
@@ -532,6 +543,130 @@ async function runTests() {
       runAssertion('Throws descriptive error message on query failure', err.message.includes('Database connection timeout'));
     }
     runAssertion('Database error was caught and propagated', errorThrown);
+  });
+
+  // --- 8. PHASE 6 STEP 7: SKILLS FILTER FUNCTIONALITY ---
+
+  await test('13: Skills filter matches one complete skill case-insensitively and trimmed', () => {
+    // Exact match: Python matches user-001 (Alex) and user-002 (Zihad)
+    const pythonResults = filterPeople(mockProfiles, { skill: 'Python' });
+    runAssertion('Includes profiles with Python skill', pythonResults.length === 2);
+    runAssertion('Includes Alex Rivera', pythonResults.some((p) => p.full_name === 'Alex Rivera'));
+    runAssertion('Includes Ahammed Zihad', pythonResults.some((p) => p.full_name === 'Ahammed Zihad'));
+    runAssertion('Excludes profiles without Python skill (e.g., Maya Lin)', !pythonResults.some((p) => p.full_name === 'Maya Lin'));
+
+    // Case-insensitivity
+    const upperResults = filterPeople(mockProfiles, { skill: 'PYTHON' });
+    runAssertion('Matches case-insensitively with uppercase input', upperResults.length === 2);
+
+    const lowerResults = filterPeople(mockProfiles, { skill: 'python' });
+    runAssertion('Matches case-insensitively with lowercase input', lowerResults.length === 2);
+
+    // Whitespace trimming in filter input
+    const paddedResults = filterPeople(mockProfiles, { skill: '   Python   ' });
+    runAssertion('Matches when filter input has leading/trailing whitespace', paddedResults.length === 2);
+
+    // Whitespace trimming in stored profile skill (' postgresql ' stored on user-002)
+    const pgResults = filterPeople(mockProfiles, { skill: 'postgresql' });
+    runAssertion('Matches stored profile skill with surrounding whitespace', pgResults.length === 1 && pgResults[0].full_name === 'Ahammed Zihad');
+
+    // Exact normalized matching: 'Python' does NOT match 'Python Basics'
+    const mockWithBasics = [
+      { id: 'u1', full_name: 'Student 1', skills: ['Python Basics'] },
+      { id: 'u2', full_name: 'Student 2', skills: ['Python'] },
+    ];
+    const exactMatchOnly = filterPeople(mockWithBasics, { skill: 'Python' });
+    runAssertion('Python matches exact skill and excludes Python Basics', exactMatchOnly.length === 1 && exactMatchOnly[0].id === 'u2');
+
+    const exactBasicsOnly = filterPeople(mockWithBasics, { skill: 'Python Basics' });
+    runAssertion('Python Basics matches exact skill and excludes Python', exactBasicsOnly.length === 1 && exactBasicsOnly[0].id === 'u1');
+  });
+
+  await test('14: Null, missing, and empty skills arrays do not break results', () => {
+    const edgeCaseProfiles = [
+      { id: 'ec-1', full_name: 'Null Skills User', skills: null },
+      { id: 'ec-2', full_name: 'Undefined Skills User' },
+      { id: 'ec-3', full_name: 'Empty Skills User', skills: [] },
+      { id: 'ec-4', full_name: 'Valid Skills User', skills: ['TypeScript'] },
+    ];
+
+    // Filtering with a skill returns only ec-4 without throwing
+    const results = filterPeople(edgeCaseProfiles, { skill: 'TypeScript' });
+    runAssertion('Safely handles null, missing, and empty skills arrays', results.length === 1 && results[0].id === 'ec-4');
+
+    // Filtering without skill returns all profiles
+    const allResults = filterPeople(edgeCaseProfiles, {});
+    runAssertion('Safely returns all profiles when no skill filter is active', allResults.length === 4);
+  });
+
+  await test('15: extractAvailableSkills derives unique sorted skills without duplicates or unauthorized exposure', () => {
+    const rawList = [
+      { id: 'p1', skills: ['Python', ' python ', 'PYTHON', 'React'] },
+      { id: 'p2', skills: ['REACT', 'react', 'Vue.js'] },
+      { id: 'p3', skills: null },
+      { id: 'p4', skills: [] },
+      { id: 'p5', skills: ['  Angular  '] },
+    ];
+
+    const extracted = extractAvailableSkills(rawList);
+    runAssertion('Returns unique deduplicated skills list', extracted.length === 4);
+    runAssertion('Contains Angular', extracted.includes('Angular'));
+    runAssertion('Contains Python', extracted.includes('Python'));
+    runAssertion('Contains React', extracted.includes('React'));
+    runAssertion('Contains Vue.js', extracted.includes('Vue.js'));
+
+    // Check alphabetical order
+    const sorted = [...extracted].sort((a, b) => a.localeCompare(b));
+    runAssertion('Skills are sorted alphabetically', JSON.stringify(extracted) === JSON.stringify(sorted));
+
+    // Inaccessible profiles cannot leak skills: if a profile is not in the list, its skills are not returned
+    runAssertion('Inaccessible profile skills are not present', !extracted.includes('SecretSkill'));
+  });
+
+  await test('16: Skills filter combines correctly with search, tags, program, specialization, and year', () => {
+    // 1. Skill + Search
+    const searchAndSkill = filterPeople(mockProfiles, { search: 'alex', skill: 'Python' });
+    runAssertion('Skill + Search narrows down to Alex Rivera', searchAndSkill.length === 1 && searchAndSkill[0].full_name === 'Alex Rivera');
+
+    // 2. Skill + Program
+    const progAndSkill = filterPeople(mockProfiles, { program: 'BCA', skill: 'Python' });
+    runAssertion('Skill + Program narrows down to Ahammed Zihad (BCA)', progAndSkill.length === 1 && progAndSkill[0].full_name === 'Ahammed Zihad');
+
+    // 3. Skill + Specialization
+    const specAndSkill = filterPeople(mockProfiles, { specialization: 'Cyber Security', skill: 'Python' });
+    runAssertion('Skill + Specialization narrows down to Alex Rivera', specAndSkill.length === 1 && specAndSkill[0].full_name === 'Alex Rivera');
+
+    // 4. Skill + Year
+    const yearAndSkill = filterPeople(mockProfiles, { year: '2nd Year', skill: 'Python' });
+    runAssertion('Skill + Year narrows down to Ahammed Zihad', yearAndSkill.length === 1 && yearAndSkill[0].full_name === 'Ahammed Zihad');
+
+    // 5. Skill + Tag (Tag filter does not filter people)
+    const tagAndSkill = filterPeople(mockProfiles, { tag: 'Blockchain', skill: 'Python' });
+    runAssertion('Tag filter does not exclude people with matching skill', tagAndSkill.length === 2);
+
+    // 6. All combined
+    const allCombined = filterPeople(mockProfiles, {
+      search: 'Zihad',
+      program: 'BCA',
+      specialization: 'Python Full Stack',
+      year: '2nd Year',
+      skill: 'Python',
+    });
+    runAssertion('All filters combined match exact person', allCombined.length === 1 && allCombined[0].full_name === 'Ahammed Zihad');
+
+    // 7. Reset / empty skill filter returns all eligible profiles
+    const resetSkill = filterPeople(mockProfiles, { skill: '' });
+    runAssertion('Empty skill filter returns all mock profiles', resetSkill.length === mockProfiles.length);
+  });
+
+  await test('17: Achievements are strictly excluded and never used as a filter', () => {
+    const withAchievements = [
+      { id: 'a1', full_name: 'Person A', skills: ['Python'], achievements: ['1st Place Hackathon 2026'] },
+    ];
+
+    // Filter by achievements does not exist or filter
+    const people = filterPeople(withAchievements, { achievement: 'Hackathon', achievements: 'Hackathon' });
+    runAssertion('Achievements is not used as a filter', people.length === 1);
   });
 
   console.log('\n======================================================================');

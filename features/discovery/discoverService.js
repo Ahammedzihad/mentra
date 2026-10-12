@@ -106,6 +106,41 @@ export function extractAvailableTags(projects = []) {
 }
 
 /**
+ * Extracts and deduplicates all unique skill values across the provided directory profiles.
+ * Used to derive the available Skills filter options strictly from profiles returned by
+ * the normal RLS-protected query, ensuring inaccessible profile skills are never exposed.
+ *
+ * Values are normalized by trimming whitespace. Duplicate entries are removed case-insensitively,
+ * preserving the first encountered casing. Returned array is sorted alphabetically.
+ *
+ * @param {Array<Object>} [people=[]]
+ * @returns {Array<string>} Unique skills sorted alphabetically
+ */
+export function extractAvailableSkills(people = []) {
+  if (!Array.isArray(people)) return [];
+
+  const seenMap = new Map();
+
+  for (const person of people) {
+    if (person && Array.isArray(person.skills)) {
+      for (const skill of person.skills) {
+        if (typeof skill === 'string') {
+          const trimmed = skill.trim();
+          if (trimmed) {
+            const lower = trimmed.toLowerCase();
+            if (!seenMap.has(lower)) {
+              seenMap.set(lower, trimmed);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return Array.from(seenMap.values()).sort((a, b) => a.localeCompare(b));
+}
+
+/**
  * Sorts items newest first using each row's `created_at` timestamp.
  * Rows with missing, null, or invalid timestamps are consistently placed at the end.
  *
@@ -136,8 +171,10 @@ export function sortNewestFirst(items = []) {
 }
 
 /**
- * Filters the people collection using the explicit Phase 5 Step 3 filter-scope rules:
+ * Filters the people collection using the explicit Phase 5 Step 3 & Phase 6 Step 7 filter-scope rules:
  * - Free-text search: Case-insensitive substring match against `full_name`.
+ * - Skill filter: Matches one complete skill case-insensitively against `skills` array.
+ *   Trims whitespace before comparing. Handles null, missing, empty skills arrays safely.
  * - Program: Matches stored profile value (`program`).
  * - Specialization: Matches stored profile value (`specialization`).
  * - Year: Matches stored profile value (`year`).
@@ -152,6 +189,9 @@ export function filterPeople(people = [], filters = {}) {
   if (!Array.isArray(people)) return [];
 
   const searchQuery = typeof filters.search === 'string' ? filters.search.trim().toLowerCase() : '';
+  const skillFilter = typeof filters.skill === 'string'
+    ? filters.skill.trim().toLowerCase()
+    : (typeof filters.skills === 'string' ? filters.skills.trim().toLowerCase() : '');
   const programFilter = typeof filters.program === 'string' ? filters.program.trim() : '';
   const specFilter = typeof filters.specialization === 'string' ? filters.specialization.trim() : '';
   const yearFilter = typeof filters.year === 'string' ? filters.year.trim() : '';
@@ -172,21 +212,34 @@ export function filterPeople(people = [], filters = {}) {
       }
     }
 
-    // 2. Program filter
+    // 2. Skill filter (Phase 6 Step 7: matches one complete skill case-insensitively and trimmed)
+    if (skillFilter) {
+      if (!Array.isArray(person.skills)) {
+        return false;
+      }
+      const hasSkill = person.skills.some((s) => {
+        return typeof s === 'string' && s.trim().toLowerCase() === skillFilter;
+      });
+      if (!hasSkill) {
+        return false;
+      }
+    }
+
+    // 3. Program filter
     if (programFilter) {
       if (person.program !== programFilter) {
         return false;
       }
     }
 
-    // 3. Specialization filter
+    // 4. Specialization filter
     if (specFilter) {
       if (person.specialization !== specFilter) {
         return false;
       }
     }
 
-    // 4. Year filter
+    // 5. Year filter
     if (yearFilter) {
       if (person.year !== yearFilter) {
         return false;
@@ -314,10 +367,10 @@ export async function fetchDiscoverData(filters = {}, clientOverride = null) {
     )
     .order('created_at', { ascending: false });
 
-  // 2. Query directory profiles (safe collegiate columns only; email and bio omitted)
+  // 2. Query directory profiles (safe collegiate columns only; email, bio, and achievements omitted)
   const peoplePromise = client
     .from('profiles')
-    .select('id, full_name, role, program, specialization, year, created_at')
+    .select('id, full_name, role, program, specialization, year, created_at, skills')
     .order('created_at', { ascending: false });
 
   const [projectsResult, peopleResult] = await Promise.all([projectsPromise, peoplePromise]);
@@ -338,6 +391,9 @@ export async function fetchDiscoverData(filters = {}, clientOverride = null) {
   // Extract available tags only from projects returned by the RLS-protected query
   const availableTags = extractAvailableTags(rawProjects);
 
+  // Extract available skills only from profiles returned by the RLS-protected query
+  const availableSkills = extractAvailableSkills(rawPeople);
+
   // Apply search and active filters with AND logic
   const filteredProjects = filterProjects(rawProjects, filters);
   const filteredPeople = filterPeople(rawPeople, filters);
@@ -346,5 +402,6 @@ export async function fetchDiscoverData(filters = {}, clientOverride = null) {
     people: sortNewestFirst(filteredPeople),
     projects: sortNewestFirst(filteredProjects),
     availableTags,
+    availableSkills,
   };
 }

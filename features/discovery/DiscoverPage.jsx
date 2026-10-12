@@ -8,6 +8,7 @@ import {
   fetchDiscoverData,
   filterPeople,
   filterProjects,
+  extractAvailableSkills,
 } from './discoverService.js';
 import {
   Search,
@@ -111,6 +112,7 @@ export function DiscoverPage() {
   // Active filter controls
   const [search, setSearch] = useState('');
   const [tag, setTag] = useState('');
+  const [skill, setSkill] = useState('');
   const [program, setProgram] = useState('');
   const [specialization, setSpecialization] = useState('');
   const [year, setYear] = useState('');
@@ -151,6 +153,11 @@ export function DiscoverPage() {
     return extractYearOptions(rawPeople, rawProjects);
   }, [rawPeople, rawProjects]);
 
+  // Derived Skill options from loaded directory profiles (distinct non-empty values deduplicated case-insensitively)
+  const skillOptions = useMemo(() => {
+    return extractAvailableSkills(rawPeople);
+  }, [rawPeople]);
+
   // Derived Specialization options based on selected Program
   const specializationOptions = useMemo(() => {
     if (program) {
@@ -176,32 +183,35 @@ export function DiscoverPage() {
   const handleClearFilters = () => {
     setSearch('');
     setTag('');
+    setSkill('');
     setProgram('');
     setSpecialization('');
     setYear('');
   };
 
-  const hasActiveFilters = Boolean(search || tag || program || specialization || year);
+  const hasActiveFilters = Boolean(search || tag || skill || program || specialization || year);
 
   // Filter existing rows in-memory using committed production helpers
   const matchingPeople = useMemo(() => {
     return filterPeople(rawPeople, {
       search,
+      skill,
       program,
       specialization,
       year,
     });
-  }, [rawPeople, search, program, specialization, year]);
+  }, [rawPeople, search, skill, program, specialization, year]);
 
   const matchingProjects = useMemo(() => {
     return filterProjects(rawProjects, {
       search,
       tag,
+      skill,
       program,
       specialization,
       year,
     });
-  }, [rawProjects, search, tag, program, specialization, year]);
+  }, [rawProjects, search, tag, skill, program, specialization, year]);
 
   return (
     <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '2.5rem 1.5rem' }}>
@@ -355,6 +365,39 @@ export function DiscoverPage() {
               {availableTags.map((t) => (
                 <option key={t} value={t}>
                   {t}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Skill Filter */}
+          <div>
+            <label
+              htmlFor="discover-skill-select"
+              style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.35rem' }}
+            >
+              Skill
+            </label>
+            <select
+              id="discover-skill-select"
+              data-testid="discover-skill-select"
+              value={skill}
+              onChange={(e) => setSkill(e.target.value)}
+              aria-label="Filter by Skill"
+              style={{
+                width: '100%',
+                padding: '0.6rem 0.75rem',
+                fontSize: '0.9rem',
+                borderRadius: '6px',
+                border: '1px solid var(--border-subtle)',
+                backgroundColor: 'var(--bg-surface, #fff)',
+                color: 'inherit',
+              }}
+            >
+              <option value="">All Skills</option>
+              {skillOptions.map((s) => (
+                <option key={s} value={s}>
+                  {s}
                 </option>
               ))}
             </select>
