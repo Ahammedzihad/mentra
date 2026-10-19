@@ -5,6 +5,7 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { CreateProjectModal } from '../../../features/projects/CreateProjectModal';
 import { EditProjectModal } from '../../../features/projects/EditProjectModal';
 import { DeleteConfirmModal } from '../../../features/projects/DeleteConfirmModal';
+import { ProjectPhotoGallery } from '../../../features/projects/ProjectPhotoGallery';
 import { AddJourneyModal } from '../../../features/journey/AddJourneyModal';
 import {
   FolderPlus,
@@ -600,6 +601,9 @@ export const StudentDashboard = () => {
                     >
                       {proj.description}
                     </p>
+
+                    {/* Project Photo Gallery (Mentra Phase 7 Step 6) */}
+                    <ProjectPhotoGallery projectId={proj.id} />
 
                     <div
                       style={{

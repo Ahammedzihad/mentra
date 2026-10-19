@@ -9,13 +9,25 @@ import {
   UserPlus,
   UserMinus,
   Loader2,
+  Image as ImageIcon,
+  Upload,
+  Trash2,
+  RefreshCw,
 } from 'lucide-react';
 import { ProjectVisibilitySelector } from './ProjectVisibilitySelector';
 import { ProjectTagsInput } from './ProjectTagsInput';
 import { supabase, isSupabaseConfigured } from '../../frontend/lib/supabase';
 import { useAuth } from '../../frontend/context/AuthContext';
-
-
+import {
+  MAX_PROJECT_PHOTOS,
+  validateImageFile,
+  compressImageToWebp,
+  uploadSingleProjectPhoto,
+  deleteSingleProjectPhoto,
+  deleteProjectMediaRowOnly,
+  fetchProjectMediaWithSignedUrls,
+  getAvailablePositions,
+} from './projectMediaService';
 
 export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated }) => {
   const { user, profile } = useAuth();
@@ -35,6 +47,15 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
 
+  // Project Photos State (Mentra Phase 7)
+  const [existingMedia, setExistingMedia] = useState([]);
+  const [loadingMedia, setLoadingMedia] = useState(false);
+  const [mediaError, setMediaError] = useState(null);
+  const [stagedNewPhotos, setStagedNewPhotos] = useState([]);
+  const [isUploadingPhotos, setIsUploadingPhotos] = useState(false);
+  const [removingMediaId, setRemovingMediaId] = useState(null);
+  const [photoGeneralError, setPhotoGeneralError] = useState(null);
+
   // Initialize form when project changes
   useEffect(() => {
     if (project) {
@@ -50,16 +71,54 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
     }
   }, [project]);
 
+  const loadExistingMedia = useCallback(async () => {
+    if (!project || !isSupabaseConfigured) return;
+    setLoadingMedia(true);
+    setMediaError(null);
+    try {
+      const rows = await fetchProjectMediaWithSignedUrls(supabase, project.id);
+      setExistingMedia(rows);
+    } catch (err) {
+      console.error('Error loading project media:', err);
+      setMediaError('Unable to load attached photos.');
+    } finally {
+      setLoadingMedia(false);
+    }
+  }, [project]);
+
+  useEffect(() => {
+    if (isOpen && project) {
+      loadExistingMedia();
+      setStagedNewPhotos([]);
+      setPhotoGeneralError(null);
+    }
+  }, [isOpen, project, loadExistingMedia]);
+
+  const handleCloseModal = useCallback(() => {
+    stagedNewPhotos.forEach((p) => {
+      if (p.previewUrl) {
+        try {
+          URL.revokeObjectURL(p.previewUrl);
+        } catch {
+          // ignore cleanup exception
+        }
+      }
+    });
+    setStagedNewPhotos([]);
+    setPhotoGeneralError(null);
+    onClose();
+  }, [stagedNewPhotos, onClose]);
+
   // Handle ESC key
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && isOpen) {
-        onClose();
+        handleCloseModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, handleCloseModal]);
 
   // Load existing shares when project exists and visibility is selected
   const fetchShares = useCallback(async () => {
@@ -219,9 +278,263 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
     }
   };
 
+  const handlePhotoSelect = (e) => {
+    setPhotoGeneralError(null);
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    e.target.value = '';
+
+    const currentTotal = existingMedia.length + stagedNewPhotos.length;
+    const remainingSlots = MAX_PROJECT_PHOTOS - currentTotal;
+
+    if (remainingSlots <= 0) {
+      setPhotoGeneralError(`A project may have at most ${MAX_PROJECT_PHOTOS} photos. Maximum limit reached.`);
+      return;
+    }
+
+    let filesToProcess = files;
+    if (files.length > remainingSlots) {
+      setPhotoGeneralError(
+        `Only ${remainingSlots} more photo(s) allowed (maximum ${MAX_PROJECT_PHOTOS}). Excess files were not added.`
+      );
+      filesToProcess = files.slice(0, remainingSlots);
+    }
+
+    const newEntries = [];
+    for (const file of filesToProcess) {
+      const validation = validateImageFile(file);
+      if (!validation.valid) {
+        setPhotoGeneralError(validation.error);
+        continue;
+      }
+
+      const id = `new-photo-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const previewUrl = URL.createObjectURL(file);
+      newEntries.push({
+        id,
+        file,
+        name: file.name,
+        size: file.size,
+        previewUrl,
+        status: 'staged',
+        error: null,
+        mediaRow: null,
+      });
+    }
+
+    if (newEntries.length > 0) {
+      setStagedNewPhotos((prev) => [...prev, ...newEntries]);
+    }
+  };
+
+  const handleRemoveStagedPhoto = (photoId) => {
+    setStagedNewPhotos((prev) => {
+      const target = prev.find((p) => p.id === photoId);
+      if (target && target.previewUrl) {
+        try {
+          URL.revokeObjectURL(target.previewUrl);
+        } catch {
+          // ignore
+        }
+      }
+      return prev.filter((p) => p.id !== photoId);
+    });
+  };
+
+  const handleRemoveExistingMedia = async (mediaItem) => {
+    if (!mediaItem || !mediaItem.id) return;
+    if (removingMediaId || loading || isUploadingPhotos) return; // Prevent duplicate cleanup actions
+    if (!user || user.id !== project.user_id) {
+      setPhotoGeneralError('Unauthorized: Only the project owner may remove photos.');
+      return;
+    }
+
+    setRemovingMediaId(mediaItem.id);
+    setPhotoGeneralError(null);
+
+    try {
+      if (mediaItem.isStorageMissing) {
+        // Safe recovery: file is already confirmed absent from storage; retry deleting database row directly
+        await deleteProjectMediaRowOnly({
+          supabaseClient: supabase,
+          mediaId: mediaItem.id,
+        });
+      } else {
+        // Safe order: delete storage object first, confirm absent, delete database row, confirm absent
+        await deleteSingleProjectPhoto({
+          supabaseClient: supabase,
+          projectId: project.id,
+          mediaId: mediaItem.id,
+          path: mediaItem.path,
+        });
+      }
+
+      // Update local state after successful removal
+      setExistingMedia((prev) => prev.filter((m) => m.id !== mediaItem.id));
+    } catch (err) {
+      console.error('Failed to remove photo:', err);
+      if (err?.isStorageDeleted) {
+        // Storage deletion succeeded and confirmed absent, but DB row deletion or read-back failed!
+        // Keep modal open, mark row as missing from storage, show clear actionable notice
+        setExistingMedia((prev) =>
+          prev.map((m) => (m.id === mediaItem.id ? { ...m, isStorageMissing: true } : m))
+        );
+        setPhotoGeneralError(
+          err.message ||
+            'Photo file was confirmed removed from storage, but deleting the database record failed. The file is gone from storage but its record remains below. Click "Retry DB Removal" to complete cleanup.'
+        );
+      } else {
+        // Storage deletion failed or inconclusive; database row was kept intact
+        setPhotoGeneralError(
+          err.message || 'Failed to remove attached photo. Database record was preserved.'
+        );
+      }
+    } finally {
+      setRemovingMediaId(null);
+    }
+  };
+
+  const handleRetryDeleteRow = async (mediaItem) => {
+    if (!mediaItem || !mediaItem.id) return;
+    if (removingMediaId || loading || isUploadingPhotos) return; // Prevent duplicate cleanup actions
+    if (!user || user.id !== project.user_id) {
+      setPhotoGeneralError('Unauthorized: Only the project owner may remove photos.');
+      return;
+    }
+
+    setRemovingMediaId(mediaItem.id);
+    setPhotoGeneralError(null);
+
+    try {
+      // Retry database row removal directly without requiring the file to exist in storage, and verify read-back
+      await deleteProjectMediaRowOnly({
+        supabaseClient: supabase,
+        mediaId: mediaItem.id,
+      });
+
+      // Update local state after confirmed successful removal
+      setExistingMedia((prev) => prev.filter((m) => m.id !== mediaItem.id));
+    } catch (err) {
+      console.error('Failed to retry database row removal:', err);
+      setPhotoGeneralError(
+        `Failed to remove database record: ${err.message}. The record remains available for retry.`
+      );
+    } finally {
+      setRemovingMediaId(null);
+    }
+  };
+
+  const executePhotoUploads = async (targetPhotoIds = null) => {
+    if (!project?.id || !user) return false;
+
+    setIsUploadingPhotos(true);
+    setPhotoGeneralError(null);
+
+    // Re-fetch fresh rows from DB to ensure positions are preserved and accurate
+    let freshRows = [];
+    try {
+      freshRows = await fetchProjectMediaWithSignedUrls(supabase, project.id);
+      setExistingMedia(freshRows);
+    } catch {
+      freshRows = [...existingMedia];
+    }
+
+    const photosToProcess = stagedNewPhotos.filter((p) => {
+      if (p.status === 'success') return false;
+      if (targetPhotoIds) return targetPhotoIds.includes(p.id);
+      return true;
+    });
+
+    if (photosToProcess.length === 0) {
+      setIsUploadingPhotos(false);
+      return true;
+    }
+
+    let anyFailed = false;
+
+    for (const item of photosToProcess) {
+      const availablePositions = getAvailablePositions(freshRows);
+      if (availablePositions.length === 0) {
+        setStagedNewPhotos((prev) =>
+          prev.map((p) =>
+            p.id === item.id
+              ? { ...p, status: 'error', error: 'No available photo slots remaining (maximum 5).' }
+              : p
+          )
+        );
+        anyFailed = true;
+        continue;
+      }
+      const assignedPosition = availablePositions[0]; // Assign lowest available position
+
+      setStagedNewPhotos((prev) =>
+        prev.map((p) => (p.id === item.id ? { ...p, status: 'compressing', error: null } : p))
+      );
+
+      let webpBlob = null;
+      try {
+        webpBlob = await compressImageToWebp(item.file);
+      } catch (compErr) {
+        setStagedNewPhotos((prev) =>
+          prev.map((p) =>
+            p.id === item.id ? { ...p, status: 'error', error: compErr.message } : p
+          )
+        );
+        anyFailed = true;
+        continue;
+      }
+
+      setStagedNewPhotos((prev) =>
+        prev.map((p) => (p.id === item.id ? { ...p, status: 'uploading' } : p))
+      );
+
+      try {
+        const mediaRow = await uploadSingleProjectPhoto({
+          supabaseClient: supabase,
+          projectId: project.id,
+          uploaderId: user.id,
+          blobOrFile: webpBlob,
+          position: assignedPosition,
+        });
+
+        freshRows.push(mediaRow);
+
+        setStagedNewPhotos((prev) =>
+          prev.map((p) =>
+            p.id === item.id ? { ...p, status: 'success', mediaRow, error: null } : p
+          )
+        );
+      } catch (upErr) {
+        setStagedNewPhotos((prev) =>
+          prev.map((p) =>
+            p.id === item.id ? { ...p, status: 'error', error: upErr.message } : p
+          )
+        );
+        anyFailed = true;
+      }
+    }
+
+    // Refresh database state after completion
+    try {
+      const updatedRows = await fetchProjectMediaWithSignedUrls(supabase, project.id);
+      setExistingMedia(updatedRows);
+    } catch {
+      // ignore
+    }
+
+    setIsUploadingPhotos(false);
+    return !anyFailed;
+  };
+
+  const handleRetrySinglePhoto = async (photoId) => {
+    await executePhotoUploads([photoId]);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
+    setSharesError(null);
+    setPhotoGeneralError(null);
 
     if (!title.trim()) {
       setError('Please provide a project title.');
@@ -273,12 +586,33 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
         profiles: data?.profiles || project.profiles || profile,
       };
 
-      setSuccess(true);
-      setTimeout(() => {
+      // Upload any new staged photos
+      const pendingPhotos = stagedNewPhotos.filter((p) => p.status !== 'success');
+      if (pendingPhotos.length === 0) {
+        setSuccess(true);
+        setTimeout(() => {
+          if (onProjectUpdated) onProjectUpdated(updatedItem);
+          setSuccess(false);
+          handleCloseModal();
+        }, 500);
+        return;
+      }
+
+      const allSucceeded = await executePhotoUploads();
+
+      if (allSucceeded) {
+        setSuccess(true);
+        setTimeout(() => {
+          if (onProjectUpdated) onProjectUpdated(updatedItem);
+          setSuccess(false);
+          handleCloseModal();
+        }, 500);
+      } else {
         if (onProjectUpdated) onProjectUpdated(updatedItem);
-        setSuccess(false);
-        onClose();
-      }, 500);
+        setPhotoGeneralError(
+          'Project details updated, but one or more photos encountered an upload error. You can retry the failed photos below, or close this dialog.'
+        );
+      }
     } catch (err) {
       console.error('Error updating project:', err);
       if (err?.message?.includes('tags_max_count') || err?.details?.includes('tags_max_count')) {
@@ -295,7 +629,7 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
     <div
       className="modal-overlay"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) handleCloseModal();
       }}
       role="dialog"
       aria-modal="true"
@@ -320,7 +654,7 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
             </h3>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleCloseModal}
             aria-label="Close dialog"
             style={{
               background: 'transparent',
@@ -656,6 +990,461 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
             </div>
           )}
 
+          {/* Project Photos Section (Mentra Phase 7) */}
+          <div
+            style={{
+              marginTop: '1.25rem',
+              padding: '1rem',
+              backgroundColor: 'var(--color-warm-ivory-light)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '0.45rem',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                <ImageIcon size={16} style={{ color: 'var(--color-terracotta)' }} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-primary-dark)' }}>
+                  Project Photos
+                </span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  ({existingMedia.length + stagedNewPhotos.length}/{MAX_PROJECT_PHOTOS})
+                </span>
+              </div>
+
+              <label
+                className="btn btn-secondary btn-sm"
+                style={{
+                  cursor:
+                    existingMedia.length + stagedNewPhotos.length >= MAX_PROJECT_PHOTOS ||
+                    loading ||
+                    isUploadingPhotos ||
+                    !!removingMediaId
+                      ? 'not-allowed'
+                      : 'pointer',
+                  opacity:
+                    existingMedia.length + stagedNewPhotos.length >= MAX_PROJECT_PHOTOS ||
+                    loading ||
+                    isUploadingPhotos ||
+                    !!removingMediaId
+                      ? 0.6
+                      : 1,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontSize: '0.75rem',
+                  padding: '0.3rem 0.65rem',
+                }}
+              >
+                <Upload size={13} />
+                <span>Add Photos</span>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  multiple
+                  disabled={
+                    existingMedia.length + stagedNewPhotos.length >= MAX_PROJECT_PHOTOS ||
+                    loading ||
+                    isUploadingPhotos ||
+                    !!removingMediaId
+                  }
+                  onChange={handlePhotoSelect}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            </div>
+
+            <p style={{ fontSize: '0.775rem', color: 'var(--text-secondary)', margin: '0 0 0.75rem 0', lineHeight: 1.45 }}>
+              Attach up to 5 photos (JPEG, PNG, WebP). Existing photo slots are preserved; new photos take the lowest available slot.
+            </p>
+
+            {mediaError && (
+              <div
+                className="notice-box error"
+                style={{ padding: '0.45rem 0.65rem', marginBottom: '0.75rem', fontSize: '0.78rem' }}
+              >
+                <AlertCircle size={14} style={{ flexShrink: 0 }} />
+                <span>{mediaError}</span>
+              </div>
+            )}
+
+            {photoGeneralError && (
+              <div
+                className="notice-box error"
+                style={{ padding: '0.45rem 0.65rem', marginBottom: '0.75rem', fontSize: '0.78rem' }}
+              >
+                <AlertCircle size={14} style={{ flexShrink: 0 }} />
+                <span>{photoGeneralError}</span>
+              </div>
+            )}
+
+            {existingMedia.some((m) => m.isStorageMissing) && (
+              <div
+                className="notice-box warning"
+                style={{
+                  padding: '0.45rem 0.65rem',
+                  marginBottom: '0.75rem',
+                  fontSize: '0.78rem',
+                  backgroundColor: '#FFF8E1',
+                  borderColor: '#FFE082',
+                  color: '#5D4037',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                }}
+              >
+                <AlertCircle size={14} style={{ flexShrink: 0, color: '#F57C00' }} />
+                <span>
+                  One or more photos were deleted from storage, but their database records remain. Click &quot;Retry DB Removal&quot; on the affected slot to finalize cleanup.
+                </span>
+              </div>
+            )}
+
+            {loadingMedia ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', padding: '0.5rem 0', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                <Loader2 size={15} className="spin" />
+                <span>Loading attached project photos...</span>
+              </div>
+            ) : (
+              (existingMedia.length > 0 || stagedNewPhotos.length > 0) && (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
+                    gap: '0.75rem',
+                    marginTop: '0.5rem',
+                  }}
+                >
+                  {/* Existing attached photos */}
+                  {existingMedia.map((photo) => {
+                    const isRemoving = removingMediaId === photo.id;
+                    const isMissing = !!photo.isStorageMissing;
+                    return (
+                      <div
+                        key={photo.id}
+                        style={{
+                          position: 'relative',
+                          borderRadius: 'var(--radius-sm)',
+                          border: isMissing
+                            ? '1px solid var(--color-terracotta)'
+                            : '1px solid var(--border-subtle)',
+                          backgroundColor: 'var(--color-white)',
+                          overflow: 'hidden',
+                          display: 'flex',
+                          flexDirection: 'column',
+                        }}
+                      >
+                        <div style={{ position: 'relative', width: '100%', height: '85px', backgroundColor: '#e9e4dc' }}>
+                          {isMissing ? (
+                            <div
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '0.35rem',
+                                textAlign: 'center',
+                                backgroundColor: '#fbf4f2',
+                              }}
+                            >
+                              <AlertCircle size={15} style={{ color: 'var(--color-terracotta)', marginBottom: '2px' }} />
+                              <span style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--color-terracotta)' }}>
+                                Storage File Removed
+                              </span>
+                              <span style={{ fontSize: '0.58rem', color: 'var(--text-muted)' }}>
+                                Record remains in DB
+                              </span>
+                            </div>
+                          ) : photo.signedUrl ? (
+                            <img
+                              src={photo.signedUrl}
+                              alt={`Slot ${photo.position}`}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            />
+                          ) : (
+                            <div
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '0.7rem',
+                                color: 'var(--text-muted)',
+                              }}
+                            >
+                              Image unavailable
+                            </div>
+                          )}
+
+                          {/* Removing Overlay */}
+                          {isRemoving && (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                inset: 0,
+                                backgroundColor: 'rgba(23, 21, 19, 0.75)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: 'var(--color-warm-ivory)',
+                                fontSize: '0.65rem',
+                                gap: '0.2rem',
+                                zIndex: 3,
+                              }}
+                            >
+                              <Loader2 size={16} className="spin" />
+                              <span>Removing...</span>
+                            </div>
+                          )}
+
+                          {/* Position Badge */}
+                          <div
+                            style={{
+                              position: 'absolute',
+                              top: '4px',
+                              left: '4px',
+                              backgroundColor: isMissing
+                                ? 'var(--color-terracotta)'
+                                : 'rgba(23, 21, 19, 0.75)',
+                              color: 'var(--color-warm-ivory)',
+                              fontSize: '0.65rem',
+                              padding: '1px 5px',
+                              borderRadius: '3px',
+                              fontWeight: 600,
+                              zIndex: 2,
+                            }}
+                          >
+                            Slot {photo.position}
+                          </div>
+
+                          {/* Remove Button (Owner-only single photo removal) */}
+                          {!isRemoving && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveExistingMedia(photo)}
+                              disabled={loading || isUploadingPhotos || !!removingMediaId}
+                              title={isMissing ? 'Remove database record' : 'Remove photo from project'}
+                              style={{
+                                position: 'absolute',
+                                top: '4px',
+                                right: '4px',
+                                background: 'rgba(162, 62, 48, 0.85)',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: '50%',
+                                width: '20px',
+                                height: '20px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: 0,
+                                zIndex: 2,
+                              }}
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          )}
+
+                          {/* Retry DB Row Removal Action for missing storage files */}
+                          {!isRemoving && isMissing && (
+                            <button
+                              type="button"
+                              onClick={() => handleRetryDeleteRow(photo)}
+                              disabled={loading || isUploadingPhotos || !!removingMediaId}
+                              title="Retry database record removal"
+                              style={{
+                                position: 'absolute',
+                                bottom: '4px',
+                                left: '4px',
+                                right: '4px',
+                                background: 'var(--color-terracotta)',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: '3px',
+                                fontSize: '0.62rem',
+                                fontWeight: 600,
+                                padding: '3px 4px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '3px',
+                                zIndex: 2,
+                              }}
+                            >
+                              <RefreshCw size={10} />
+                              <span>Retry DB Removal</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Staged new photos */}
+                  {stagedNewPhotos.map((photo) => (
+                    <div
+                      key={photo.id}
+                      style={{
+                        position: 'relative',
+                        borderRadius: 'var(--radius-sm)',
+                        border:
+                          photo.status === 'error'
+                            ? '1px solid var(--color-error)'
+                            : photo.status === 'success'
+                            ? '1px solid #2e7d32'
+                            : '1px dashed var(--color-terracotta)',
+                        backgroundColor: 'var(--color-white)',
+                        overflow: 'hidden',
+                        display: 'flex',
+                        flexDirection: 'column',
+                      }}
+                    >
+                      <div style={{ position: 'relative', width: '100%', height: '85px', backgroundColor: '#e9e4dc' }}>
+                        <img
+                          src={photo.previewUrl}
+                          alt={photo.name}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+
+                        {(photo.status === 'compressing' || photo.status === 'uploading') && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              backgroundColor: 'rgba(23, 21, 19, 0.65)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: 'var(--color-warm-ivory)',
+                              fontSize: '0.65rem',
+                              gap: '0.25rem',
+                            }}
+                          >
+                            <Loader2 size={16} className="spin" />
+                            <span>{photo.status === 'compressing' ? 'Optimizing...' : 'Uploading...'}</span>
+                          </div>
+                        )}
+
+                        {photo.status === 'success' && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              bottom: '4px',
+                              right: '4px',
+                              backgroundColor: 'rgba(46, 125, 50, 0.9)',
+                              color: '#fff',
+                              borderRadius: '50%',
+                              padding: '2px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                            title="Uploaded successfully"
+                          >
+                            <CheckCircle2 size={13} />
+                          </div>
+                        )}
+
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: '4px',
+                            left: '4px',
+                            backgroundColor: 'rgba(184, 111, 82, 0.85)',
+                            color: 'var(--color-warm-ivory)',
+                            fontSize: '0.65rem',
+                            padding: '1px 5px',
+                            borderRadius: '3px',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {photo.mediaRow?.position !== undefined ? `Slot ${photo.mediaRow.position}` : 'New'}
+                        </div>
+
+                        {photo.status !== 'uploading' && photo.status !== 'compressing' && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveStagedPhoto(photo.id)}
+                            title="Remove staged photo"
+                            style={{
+                              position: 'absolute',
+                              top: '4px',
+                              right: '4px',
+                              background: 'rgba(23, 21, 19, 0.75)',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: '50%',
+                              width: '18px',
+                              height: '18px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              padding: 0,
+                            }}
+                          >
+                            <X size={11} />
+                          </button>
+                        )}
+                      </div>
+
+                      {photo.status === 'error' && (
+                        <div
+                          style={{
+                            padding: '0.35rem 0.45rem',
+                            backgroundColor: '#fdeded',
+                            fontSize: '0.68rem',
+                            color: 'var(--color-error)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '0.25rem',
+                          }}
+                        >
+                          <span style={{ lineHeight: 1.25 }} title={photo.error}>
+                            {photo.error?.length > 45 ? `${photo.error.slice(0, 45)}...` : photo.error || 'Upload failed'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRetrySinglePhoto(photo.id)}
+                            disabled={isUploadingPhotos}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--color-terracotta)',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              padding: 0,
+                              textAlign: 'left',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.2rem',
+                            }}
+                          >
+                            <RefreshCw size={10} />
+                            <span>Retry</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+
           <div
             style={{
               display: 'flex',
@@ -669,18 +1458,24 @@ export const EditProjectModal = ({ isOpen, project, onClose, onProjectUpdated })
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={onClose}
-              disabled={loading}
+              onClick={handleCloseModal}
+              disabled={loading || isUploadingPhotos || !!removingMediaId}
             >
               Cancel
             </button>
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={loading}
+              disabled={loading || isUploadingPhotos || !!removingMediaId}
             >
               <Edit3 size={15} />
-              <span>{loading ? 'Saving Changes...' : 'Save Changes'}</span>
+              <span>
+                {loading
+                  ? 'Saving Changes...'
+                  : isUploadingPhotos
+                  ? 'Uploading Photos...'
+                  : 'Save Changes'}
+              </span>
             </button>
           </div>
         </form>

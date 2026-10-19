@@ -20,6 +20,7 @@ import {
   Edit3
 } from 'lucide-react';
 import { EditProfileModal } from '../../../features/profile/EditProfileModal';
+import { ProjectPhotoGallery } from '../../../features/projects/ProjectPhotoGallery';
 
 export const MentorDashboard = () => {
   const { user, profile, loading: authLoading, refreshProfile, signOut } = useAuth();
@@ -821,6 +822,8 @@ export const MentorDashboard = () => {
                       <p style={{ fontSize: '0.875rem', lineHeight: '1.6', color: 'var(--text-secondary)', marginBottom: '1.25rem', whiteSpace: 'pre-line' }}>
                         {proj.description}
                       </p>
+                      {/* Project Photo Gallery (Mentra Phase 7 Step 6) */}
+                      <ProjectPhotoGallery projectId={proj.id} />
                     </div>
 
                     <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

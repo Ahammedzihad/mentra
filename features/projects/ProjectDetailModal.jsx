@@ -15,6 +15,8 @@ import {
 import { VISIBILITY_OPTIONS } from './projectVisibilityOptions';
 import { ProjectVisibilitySelector } from './ProjectVisibilitySelector';
 import { supabase, isSupabaseConfigured } from '../../frontend/lib/supabase';
+import { ProjectPhotoGallery } from './ProjectPhotoGallery';
+import { ProjectCommentsSection } from './ProjectCommentsSection';
 import { useAuth } from '../../frontend/context/AuthContext';
 
 /**
@@ -105,15 +107,23 @@ export const ProjectDetailModal = ({
     }
   }, [project]);
 
-  // Handle ESC key
+  // Handle ESC key and lock body scroll to avoid background scrolling problems
   useEffect(() => {
+    if (!isOpen) return;
+
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && isOpen) {
+      if (e.key === 'Escape') {
         onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = originalOverflow;
+    };
   }, [isOpen, onClose]);
 
   // Fetch Selected shares when owner views a selected project
@@ -546,6 +556,9 @@ export const ProjectDetailModal = ({
           </div>
         )}
 
+        {/* Project Photo Gallery (Mentra Phase 7 Step 6) */}
+        {currentProject?.id && <ProjectPhotoGallery projectId={currentProject.id} />}
+
         {/* Creator Identity Card */}
         <div
           style={{
@@ -597,6 +610,20 @@ export const ProjectDetailModal = ({
             </div>
           </div>
         </div>
+
+        {/* Project Discourse & Comments Section (Mentra Phase 7 Step 9) */}
+        {currentProject?.id && (
+          <div style={{ marginBottom: '1.75rem' }}>
+            <ProjectCommentsSection
+              project={currentProject}
+              projectId={currentProject.id}
+              projectOwnerId={currentProject.user_id}
+              currentUser={user}
+              isOpen={isOpen}
+              enabled={isOpen}
+            />
+          </div>
+        )}
 
         {/* =================================================================== */}
         {/* OWNER MANAGEMENT PANEL (Strictly rendered for project owner)        */}
@@ -1000,3 +1027,6 @@ export const ProjectDetailModal = ({
     </div>
   );
 };
+
+export default ProjectDetailModal;
+

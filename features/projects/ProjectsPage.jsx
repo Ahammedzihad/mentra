@@ -5,6 +5,9 @@ import { CreateProjectModal } from './CreateProjectModal';
 import { EditProjectModal } from './EditProjectModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { ProjectDetailModal } from './ProjectDetailModal';
+import { ProjectPhotoGallery } from './ProjectPhotoGallery';
+import { StartProjectComposer } from './StartProjectComposer';
+import { ProjectPostCard } from './ProjectPostCard';
 import { VISIBILITY_OPTIONS } from './projectVisibilityOptions';
 import {
   FolderPlus,
@@ -22,6 +25,45 @@ import { Link } from 'react-router-dom';
 
 const DEPARTMENTS = ['All', 'B.Tech', 'B.Des', 'BBA', 'BCA'];
 
+class ProjectsErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('Projects feed error caught by boundary:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="card-academic notice-box error" style={{ margin: '2rem auto', maxWidth: '720px', padding: '2rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+            <AlertCircle size={20} style={{ color: 'var(--color-terracotta, #B86F52)' }} />
+            <h3 className="font-serif" style={{ margin: 0, fontSize: '1.25rem' }}>Collegiate Registry Feed</h3>
+          </div>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #5A534C)', marginBottom: '1rem' }}>
+            An unexpected error occurred while rendering the project feed. Please retry to reload your view.
+          </p>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => this.setState({ hasError: false, error: null })}
+          >
+            Retry Feed
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export const ProjectsPage = () => {
   const { user, profile } = useAuth();
   const [projects, setProjects] = useState([]);
@@ -32,6 +74,12 @@ export const ProjectsPage = () => {
 
   // Modal states
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createModalMode, setCreateModalMode] = useState('manual');
+
+  const handleStartProject = (mode = 'manual') => {
+    setCreateModalMode(mode);
+    setIsCreateModalOpen(true);
+  };
   const [editingProject, setEditingProject] = useState(null);
   const [deletingProject, setDeletingProject] = useState(null);
   const [viewingProject, setViewingProject] = useState(null);
@@ -101,59 +149,57 @@ export const ProjectsPage = () => {
   });
 
   return (
-    <div style={{ padding: '3.5rem 0 6rem 0' }}>
+    <ProjectsErrorBoundary>
+      <div style={{ padding: '2rem 0 5rem 0' }}>
       <div className="container">
-        {/* Header Bar */}
+                <style>{`
+          .mentra-composer-refresh-row .mentra-start-project-composer {
+            margin-bottom: 0 !important;
+          }
+          @media (max-width: 640px) {
+            .mentra-composer-refresh-row {
+              flex-direction: column !important;
+              align-items: stretch !important;
+              gap: 0.75rem !important;
+            }
+            .mentra-composer-refresh-btn-wrapper {
+              display: flex !important;
+              justifyContent: flex-end !important;
+              width: 100% !important;
+            }
+          }
+        `}</style>
+
+        {/* Start a Project Composer & Refresh Row */}
         <div
+          className="mentra-composer-refresh-row"
           style={{
             display: 'flex',
-            flexWrap: 'wrap',
-            justifyContent: 'space-between',
-            alignItems: 'flex-end',
-            gap: '1.5rem',
-            marginBottom: '2.5rem',
-            borderBottom: '1px solid var(--border-subtle)',
-            paddingBottom: '1.75rem',
+            alignItems: 'center',
+            gap: '1rem',
+            maxWidth: '720px',
+            margin: '0 auto 1.5rem auto',
+            width: '100%',
           }}
         >
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.4rem' }}>
-              <span className="label-academic terracotta">Collegiate Registry</span>
-              <span className="badge-dept">Mentra Academic Initiatives</span>
-            </div>
-            <h1 className="font-serif" style={{ fontSize: '2.5rem', marginBottom: '0.35rem' }}>
-              Academic Projects
-            </h1>
-            <p style={{ maxWidth: '640px', fontSize: '0.95rem', color: 'var(--text-secondary)' }}>
-              Explore hypotheses, engineering prototypes, and design systems authored by students across collegiate cohorts.
-            </p>
+          <div style={{ flex: '1', minWidth: '0' }}>
+            <StartProjectComposer
+              user={user}
+              profile={profile}
+              onStartProject={handleStartProject}
+            />
           </div>
 
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div className="mentra-composer-refresh-btn-wrapper" style={{ flexShrink: 0 }}>
             <button
               onClick={fetchProjects}
               className="btn btn-secondary btn-sm"
               title="Refresh project catalog"
-              style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}
             >
-              <RefreshCw size={14} />
+              <RefreshCw size={14} style={loading ? { animation: 'spin 0.8s linear infinite' } : undefined} />
               <span>Refresh</span>
             </button>
-
-            {user ? (
-              <button
-                onClick={() => setIsCreateModalOpen(true)}
-                className="btn btn-primary"
-              >
-                <FolderPlus size={16} />
-                <span>Inaugurate Project</span>
-              </button>
-            ) : (
-              <Link to="/login" className="btn btn-secondary">
-                <span>Sign in to Inaugurate</span>
-                <ArrowRight size={14} />
-              </Link>
-            )}
           </div>
         </div>
 
@@ -305,7 +351,7 @@ export const ProjectsPage = () => {
 
             {user ? (
               <button
-                onClick={() => setIsCreateModalOpen(true)}
+                onClick={() => handleStartProject('manual')}
                 className="btn btn-primary"
               >
                 <FolderPlus size={16} />
@@ -318,290 +364,28 @@ export const ProjectsPage = () => {
             )}
           </div>
         ) : (
-          /* Projects Grid */
-          <div className="grid-2" style={{ gap: '1.75rem' }}>
-            {filteredProjects.map((project) => {
-              const isOwner = user?.id && user.id === project.user_id;
-              const creatorName =
-                project.profiles?.full_name ||
-                (isOwner ? profile?.full_name || 'You' : 'Collegiate Scholar');
-              const creatorDept = project.profiles?.department || (isOwner ? profile?.department : null);
-              const isCreatorVerifiedMentor =
-                Boolean(
-                  (project.profiles?.role === 'mentor' && project.profiles?.is_verified === true) ||
-                  (isOwner && profile?.role === 'mentor' && profile?.is_verified === true)
-                );
-              const createdDate = project.created_at
-                ? new Date(project.created_at).toLocaleDateString(undefined, {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric',
-                  })
-                : 'Archived';
-              const visibilityOption =
-                typeof project.visibility === 'string'
-                  ? VISIBILITY_OPTIONS.find((opt) => opt.id === project.visibility.toLowerCase()) || null
-                  : null;
-              const VisibilityIcon = visibilityOption?.icon;
-
-              return (
-                <article
-                  key={project.id}
-                  className="card-academic"
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    height: '100%',
-                    position: 'relative',
-                  }}
-                >
-                  <div>
-                    {/* Top Row: Department / Category & Date */}
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        marginBottom: '0.75rem',
-                      }}
-                    >
-                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                        {creatorDept ? (
-                          <span className="badge-dept terracotta">{creatorDept}</span>
-                        ) : (
-                          <span className="badge-dept">Academic Project</span>
-                        )}
-                        {isCreatorVerifiedMentor && (
-                          <span className="badge-dept gold">
-                            Verified Faculty
-                          </span>
-                        )}
-                        {isOwner && (
-                          <span className="badge-dept gold" style={{ fontSize: '0.65rem' }}>
-                            Your Project
-                          </span>
-                        )}
-                        {visibilityOption && (
-                          <span
-                            className="badge-dept"
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '0.3rem',
-                              fontSize: '0.68rem',
-                            }}
-                            title={visibilityOption.description}
-                          >
-                            {VisibilityIcon && <VisibilityIcon size={11} aria-hidden="true" />}
-                            <span>{visibilityOption.label}</span>
-                          </span>
-                        )}
-                      </div>
-
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.35rem',
-                          fontSize: '0.75rem',
-                          color: 'var(--text-muted)',
-                        }}
-                      >
-                        <Calendar size={13} />
-                        <span>{createdDate}</span>
-                      </div>
-                    </div>
-
-                    {/* Title */}
-                    <h2
-                      className="font-serif"
-                      style={{
-                        fontSize: '1.35rem',
-                        fontWeight: 600,
-                        lineHeight: 1.3,
-                        marginBottom: '0.75rem',
-                        color: 'var(--color-primary-dark)',
-                        overflowWrap: 'anywhere',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {project.title}
-                    </h2>
-
-                    {/* Description */}
-                    <p
-                      style={{
-                        fontSize: '0.9rem',
-                        lineHeight: '1.65',
-                        color: 'var(--text-secondary)',
-                        marginBottom: '1.5rem',
-                        whiteSpace: 'pre-line',
-                        overflowWrap: 'anywhere',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {project.description}
-                    </p>
-
-                    {/* Project Tags (Phase 4 Step 3) */}
-                    {Array.isArray(project.tags) && project.tags.length > 0 && (
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          gap: '0.4rem',
-                          marginBottom: '1.25rem',
-                        }}
-                      >
-                        {project.tags.slice(0, 3).map((tag, idx) => (
-                          <span
-                            key={`${tag}-${idx}`}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              backgroundColor: 'var(--color-soft-beige-light)',
-                              border: '1px solid var(--border-subtle)',
-                              borderRadius: 'var(--radius-sm)',
-                              color: 'var(--color-primary-dark)',
-                              fontSize: '0.78rem',
-                              fontWeight: 500,
-                              padding: '0.2rem 0.55rem',
-                              overflowWrap: 'anywhere',
-                              wordBreak: 'break-word',
-                              cursor: 'default',
-                              lineHeight: 1.4,
-                              transition: 'var(--transition-smooth)',
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.color = 'var(--color-terracotta)';
-                              e.currentTarget.style.borderColor = 'rgba(184, 111, 82, 0.4)';
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.color = 'var(--color-primary-dark)';
-                              e.currentTarget.style.borderColor = 'var(--border-subtle)';
-                            }}
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                        {project.tags.length > 3 && (
-                          <span
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              backgroundColor: 'var(--color-soft-beige-light)',
-                              border: '1px solid var(--border-subtle)',
-                              borderRadius: 'var(--radius-sm)',
-                              color: 'var(--text-secondary)',
-                              fontSize: '0.78rem',
-                              fontWeight: 500,
-                              padding: '0.2rem 0.55rem',
-                              overflowWrap: 'anywhere',
-                              wordBreak: 'break-word',
-                              cursor: 'default',
-                              lineHeight: 1.4,
-                            }}
-                          >
-                            +{project.tags.length - 3} more
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Card Bottom: Creator & Actions */}
-                  <div
-                    style={{
-                      borderTop: '1px solid var(--border-subtle)',
-                      paddingTop: '0.85rem',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: '0.75rem',
-                      fontSize: '0.825rem',
-                    }}
-                  >
-                    {/* Creator Display */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <div
-                        style={{
-                          width: '24px',
-                          height: '24px',
-                          borderRadius: '50%',
-                          backgroundColor: 'var(--color-dark-surface)',
-                          color: 'var(--color-warm-ivory)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '0.7rem',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {creatorName[0]?.toUpperCase() || 'S'}
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.2 }}>
-                          {creatorName}
-                        </div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                          Creator {creatorDept ? `• ${creatorDept}` : ''}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Card Actions: Details (All) + Edit/Delete (Owner Only) */}
-                    {isOwner ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <button
-                          onClick={() => setViewingProject(project)}
-                          className="btn btn-secondary btn-sm"
-                          style={{ padding: '0.35rem 0.65rem' }}
-                          title="View Project Details"
-                        >
-                          <Eye size={13} />
-                          <span>Details</span>
-                        </button>
-                        <button
-                          onClick={() => setEditingProject(project)}
-                          className="btn btn-secondary btn-sm"
-                          style={{ padding: '0.35rem 0.65rem' }}
-                          title="Revise Project Details"
-                        >
-                          <Edit3 size={13} />
-                          <span>Edit</span>
-                        </button>
-                        <button
-                          onClick={() => setDeletingProject(project)}
-                          className="btn btn-secondary btn-sm"
-                          style={{ padding: '0.35rem 0.65rem', color: '#9E382A' }}
-                          title="Withdraw Project"
-                        >
-                          <Trash2 size={13} />
-                          <span>Delete</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                        <button
-                          onClick={() => setViewingProject(project)}
-                          className="btn btn-secondary btn-sm"
-                          style={{ padding: '0.35rem 0.65rem' }}
-                          title="View Project Details"
-                        >
-                          <Eye size={13} />
-                          <span>Details</span>
-                        </button>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                          {isCreatorVerifiedMentor ? 'Guided by Verified Faculty' : 'Collegiate Initiative'}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
+          /* Projects Feed Stream */
+          <div
+            className="projects-feed-stream"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1.5rem',
+              maxWidth: '720px',
+              margin: '0 auto',
+              width: '100%',
+            }}
+          >
+            {filteredProjects.map((project) => (
+              <ProjectPostCard
+                key={project.id}
+                project={project}
+                currentUserId={user?.id}
+                onOpenDetails={(proj) => setViewingProject(proj)}
+                onEdit={(proj) => setEditingProject(proj)}
+                onDelete={(proj) => setDeletingProject(proj)}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -619,7 +403,11 @@ export const ProjectsPage = () => {
 
       <CreateProjectModal
         isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
+        initialMode={createModalMode}
+        onClose={() => {
+          setIsCreateModalOpen(false);
+          setCreateModalMode('manual');
+        }}
         onProjectCreated={handleProjectCreated}
       />
 
@@ -637,5 +425,6 @@ export const ProjectsPage = () => {
         onProjectDeleted={handleProjectDeleted}
       />
     </div>
+    </ProjectsErrorBoundary>
   );
 };
