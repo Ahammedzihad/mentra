@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../frontend/context/AuthContext';
 import { supabase } from '../../frontend/lib/supabase';
+import { AiMarkdownRenderer } from '../components/AiMarkdownRenderer';
 import {
   Sparkles,
   Send,
@@ -464,11 +465,15 @@ export const AiAdvisorPage = () => {
                         border: isAssistant ? '1px solid var(--border-subtle)' : 'none',
                         lineHeight: 1.65,
                         fontSize: '0.95rem',
-                        whiteSpace: 'pre-wrap',
+                        whiteSpace: isAssistant ? 'normal' : 'pre-wrap',
                         boxShadow: isAssistant ? 'none' : '0 2px 8px rgba(0,0,0,0.08)'
                       }}
                     >
-                      {msg.content}
+                      {isAssistant ? (
+                        <AiMarkdownRenderer content={msg.content} />
+                      ) : (
+                        msg.content
+                      )}
                     </div>
                   </div>
                 );
