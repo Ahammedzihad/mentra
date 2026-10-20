@@ -83,6 +83,7 @@ export const ProjectsPage = () => {
   const [editingProject, setEditingProject] = useState(null);
   const [deletingProject, setDeletingProject] = useState(null);
   const [viewingProject, setViewingProject] = useState(null);
+  const [likedProjectIds, setLikedProjectIds] = useState(new Set());
 
   const fetchProjects = useCallback(async () => {
     if (!isSupabaseConfigured) {
@@ -94,25 +95,89 @@ export const ProjectsPage = () => {
     setError(null);
 
     try {
-      // Query projects with foreign-key joined profiles:user_id including is_verified status (excluding email to protect student PII)
-      const { data, error: fetchErr } = await supabase
+      // Mentra Phase 7 Step 11:
+      // Query projects with foreign-key joined profiles:user_id, comments count, and project_likes count.
+      // comments(count) and project_likes(count) prevent N+1 queries by aggregating in a single call.
+      let fetchedProjects = null;
+      let likesSupported = true;
+
+      const { data: primaryData, error: primaryErr } = await supabase
         .from('projects')
-        .select('*, profiles:user_id(full_name, department, role, is_verified)')
+        .select('*, profiles:user_id(full_name, department, role, is_verified), comments(count), project_likes(count)')
         .order('created_at', { ascending: false });
 
-      if (fetchErr) throw fetchErr;
-      setProjects(data || []);
+      if (primaryErr) {
+        // Fallback: If project_likes table is not yet migrated in PostgREST schema cache
+        if (primaryErr.code === 'PGRST200' || primaryErr.code === 'PGRST205' || primaryErr.code === '42P01') {
+          likesSupported = false;
+          console.warn('project_likes table not found in schema cache. Reverting to comments-only count query.');
+          const { data: fallbackData, error: fallbackErr } = await supabase
+            .from('projects')
+            .select('*, profiles:user_id(full_name, department, role, is_verified), comments(count)')
+            .order('created_at', { ascending: false });
+
+          if (fallbackErr) throw fallbackErr;
+          fetchedProjects = fallbackData || [];
+        } else {
+          throw primaryErr;
+        }
+      } else {
+        fetchedProjects = primaryData || [];
+      }
+
+      setProjects(fetchedProjects);
+
+      // Single batched query to load current user's liked project IDs across all visible cards
+      const projectIds = fetchedProjects.map((p) => p.id).filter(Boolean);
+      if (user?.id && projectIds.length > 0 && likesSupported) {
+        const { data: userLikes, error: likesErr } = await supabase
+          .from('project_likes')
+          .select('project_id')
+          .eq('user_id', user.id)
+          .in('project_id', projectIds);
+
+        if (likesErr) {
+          console.warn('Failed to batch load user project likes:', likesErr);
+        } else {
+          setLikedProjectIds(new Set((userLikes || []).map((l) => l.project_id)));
+        }
+      } else {
+        setLikedProjectIds(new Set());
+      }
     } catch (err) {
       console.error('Error loading projects:', err);
       setError(err.message || 'Unable to retrieve projects from the collegiate registry.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     fetchProjects();
   }, [fetchProjects]);
+
+  const handleLikeToggle = useCallback((projectId, isLiked, newCount) => {
+    setLikedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (isLiked) {
+        next.add(projectId);
+      } else {
+        next.delete(projectId);
+      }
+      return next;
+    });
+
+    setProjects((prev) =>
+      prev.map((proj) => {
+        if (proj.id !== projectId) return proj;
+        return {
+          ...proj,
+          likes_count: newCount,
+          project_likes: [{ count: newCount }],
+        };
+      })
+    );
+  }, []);
 
   // Project mutation callbacks
   const handleProjectCreated = (newProject) => {
@@ -381,6 +446,8 @@ export const ProjectsPage = () => {
                 key={project.id}
                 project={project}
                 currentUserId={user?.id}
+                isLiked={likedProjectIds.has(project.id)}
+                onLikeToggle={handleLikeToggle}
                 onOpenDetails={(proj) => setViewingProject(proj)}
                 onEdit={(proj) => setEditingProject(proj)}
                 onDelete={(proj) => setDeletingProject(proj)}

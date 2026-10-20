@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { supabase, isSupabaseConfigured } from '../../frontend/lib/supabase';
 import { ProjectPhotoGallery } from './ProjectPhotoGallery';
 import { ProjectCommentsSection } from './ProjectCommentsSection';
 import { VISIBILITY_OPTIONS } from './projectVisibilityOptions';
@@ -65,6 +66,7 @@ export const ProjectPostCard = ({
   onLikeClick,
   onCommentClick,
   isLiked = false,
+  onLikeToggle,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -72,8 +74,33 @@ export const ProjectPostCard = ({
   const menuRef = useRef(null);
   const commentsMountRef = useRef(null);
 
-  const rawComment = project?.comments_count ?? project?.comments?.[0]?.count ?? 0;
-  const initialCommentCount = Number.isFinite(Number(rawComment)) ? Number(rawComment) : 0;
+  // Like state management (Mentra Phase 7 Step 11)
+  const rawLike = project?.likes_count ?? project?.project_likes?.[0]?.count;
+  const initialLikeCount =
+    rawLike !== undefined && Number.isFinite(Number(rawLike))
+      ? Number(rawLike)
+      : (project?.project_likes !== undefined ? 0 : null);
+
+  const [likeCount, setLikeCount] = useState(initialLikeCount);
+  const [internalIsLiked, setInternalIsLiked] = useState(Boolean(isLiked));
+  const [isLiking, setIsLiking] = useState(false);
+  const [likeError, setLikeError] = useState(null);
+  const [showAuthNotice, setShowAuthNotice] = useState(false);
+
+  useEffect(() => {
+    setInternalIsLiked(Boolean(isLiked));
+  }, [isLiked]);
+
+  useEffect(() => {
+    setLikeCount(initialLikeCount);
+  }, [initialLikeCount]);
+
+  // Comment count state management
+  const rawComment = project?.comments_count ?? project?.comments?.[0]?.count;
+  const initialCommentCount =
+    rawComment !== undefined && Number.isFinite(Number(rawComment))
+      ? Number(rawComment)
+      : (project?.comments !== undefined ? 0 : null);
   const [liveCommentCount, setLiveCommentCount] = useState(initialCommentCount);
 
   useEffect(() => {
@@ -142,9 +169,142 @@ export const ProjectPostCard = ({
     displayedDescription = descriptionText.slice(0, slicePoint).trim();
   }
 
-  // Safe counts
-  const rawLike = project.likes_count ?? project.project_likes?.[0]?.count ?? 0;
-  const likeCount = Number.isFinite(Number(rawLike)) ? Number(rawLike) : 0;
+  // Like button click handler
+  const handleLikeClick = async () => {
+    setLikeError(null);
+    setShowAuthNotice(false);
+
+    if (onLikeClick) {
+      try {
+        onLikeClick(project.id);
+      } catch {
+        // Safe consumer notification
+      }
+    }
+
+    // 1. Anonymous viewers receive an accessible sign-in prompt
+    if (!currentUserId) {
+      setShowAuthNotice(true);
+      return;
+    }
+
+    // 2. Prevent concurrent requests / rapid double clicks while saving
+    if (isLiking) return;
+
+    if (!isSupabaseConfigured) {
+      setLikeError('Database connection unavailable.');
+      return;
+    }
+
+    setIsLiking(true);
+    const prevLiked = internalIsLiked;
+    const prevCount = likeCount;
+
+    try {
+      if (prevLiked) {
+        // UNLIKE: Delete user's like
+        const { error: deleteErr } = await supabase
+          .from('project_likes')
+          .delete()
+          .eq('project_id', project.id)
+          .eq('user_id', currentUserId);
+
+        if (deleteErr) {
+          console.warn('Failed to remove like:', deleteErr);
+          setLikeError('Unable to update like status. Please try again.');
+          setIsLiking(false);
+          return;
+        }
+
+        // Show inactive state only after delete succeeds
+        setInternalIsLiked(false);
+
+        // Reconcile count from authoritative data
+        const { count: freshCount, error: countErr } = await supabase
+          .from('project_likes')
+          .select('*', { count: 'exact', head: true })
+          .eq('project_id', project.id);
+
+        let finalCount;
+        if (!countErr && Number.isFinite(freshCount)) {
+          finalCount = freshCount;
+        } else {
+          finalCount = prevCount !== null ? Math.max(0, prevCount - 1) : 0;
+        }
+        setLikeCount(finalCount);
+        if (onLikeToggle) {
+          onLikeToggle(project.id, false, finalCount);
+        }
+      } else {
+        // LIKE: Insert user's like
+        const { error: insertErr } = await supabase
+          .from('project_likes')
+          .insert({
+            project_id: project.id,
+            user_id: currentUserId,
+          });
+
+        if (insertErr) {
+          // Check for duplicate constraint violation
+          const isDuplicate =
+            insertErr.code === '23505' ||
+            (typeof insertErr.message === 'string' &&
+              (insertErr.message.toLowerCase().includes('duplicate') ||
+                insertErr.message.toLowerCase().includes('unique')));
+
+          if (isDuplicate) {
+            // Already liked: reconcile state without creating duplicate rows
+            setInternalIsLiked(true);
+            const { count: freshCount } = await supabase
+              .from('project_likes')
+              .select('*', { count: 'exact', head: true })
+              .eq('project_id', project.id);
+            if (Number.isFinite(freshCount)) {
+              setLikeCount(freshCount);
+              if (onLikeToggle) onLikeToggle(project.id, true, freshCount);
+            }
+          } else {
+            console.warn('Failed to insert like:', insertErr);
+            setLikeError(
+              insertErr.code === '42501'
+                ? 'You do not have permission to like this project.'
+                : 'Unable to like project at this time. Please try again.'
+            );
+          }
+          setIsLiking(false);
+          return;
+        }
+
+        // Show active state only after write succeeds
+        setInternalIsLiked(true);
+
+        // Reconcile count from authoritative data
+        const { count: freshCount, error: countErr } = await supabase
+          .from('project_likes')
+          .select('*', { count: 'exact', head: true })
+          .eq('project_id', project.id);
+
+        let finalCount;
+        if (!countErr && Number.isFinite(freshCount)) {
+          finalCount = freshCount;
+        } else {
+          finalCount = prevCount !== null ? prevCount + 1 : 1;
+        }
+        setLikeCount(finalCount);
+        if (onLikeToggle) {
+          onLikeToggle(project.id, true, finalCount);
+        }
+      }
+    } catch (err) {
+      console.warn('Unexpected error in like toggle:', err);
+      // Rollback to previous state
+      setInternalIsLiked(prevLiked);
+      setLikeCount(prevCount);
+      setLikeError('An unexpected network error occurred.');
+    } finally {
+      setIsLiking(false);
+    }
+  };
 
   const handleCommentButtonClick = () => {
     if (onCommentClick) {
@@ -528,26 +688,26 @@ export const ProjectPostCard = ({
       <ProjectPhotoGallery projectId={project.id} />
 
       {/* =========================================================================
-          6. COUNTS ROW: LIKES & COMMENTS (PRESENTATION-READY DEFERRED STATE)
+          6. COUNTS ROW: LIKES & COMMENTS
           ========================================================================= */}
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          fontSize: '0.78rem',
-          color: 'var(--text-muted, #847C73)',
+          fontSize: '0.8125rem',
+          color: 'var(--text-secondary, #5A534C)',
           borderTop: '1px solid var(--border-subtle, #DED4C4)',
           paddingTop: '0.65rem',
           paddingBottom: '0.45rem',
           marginTop: '0.25rem',
         }}
       >
-        <span title="Project likes (activates in Step 11)">
-          {likeCount} {likeCount === 1 ? 'like' : 'likes'}
+        <span title={likeCount === null ? 'Like count temporarily unavailable' : 'Project likes'}>
+          {likeCount === null ? '— likes' : `${likeCount} ${likeCount === 1 ? 'like' : 'likes'}`}
         </span>
-        <span title="Comment count including replies">
-          {liveCommentCount} {liveCommentCount === 1 ? 'comment' : 'comments'}
+        <span title={liveCommentCount === null ? 'Comment count temporarily unavailable' : 'Comment count including replies'}>
+          {liveCommentCount === null ? '— comments' : `${liveCommentCount} ${liveCommentCount === 1 ? 'comment' : 'comments'}`}
         </span>
       </div>
 
@@ -567,13 +727,11 @@ export const ProjectPostCard = ({
         {/* Like Button */}
         <button
           type="button"
-          onClick={() => {
-            if (onLikeClick) {
-              onLikeClick(project.id);
-            }
-          }}
-          title="Project likes arrive in Step 11"
-          aria-label="Like project (available in upcoming update)"
+          onClick={handleLikeClick}
+          disabled={isLiking}
+          aria-pressed={internalIsLiked}
+          aria-label={internalIsLiked ? 'Unlike project' : 'Like project'}
+          title={internalIsLiked ? 'Unlike project' : 'Like project'}
           style={{
             flex: 1,
             display: 'flex',
@@ -584,22 +742,27 @@ export const ProjectPostCard = ({
             background: 'transparent',
             border: 'none',
             borderRadius: 'var(--radius-sm, 4px)',
-            color: isLiked ? 'var(--color-terracotta, #B86F52)' : 'var(--text-secondary, #5A534C)',
-            fontWeight: isLiked ? 600 : 500,
+            color: internalIsLiked ? 'var(--color-terracotta, #B86F52)' : 'var(--text-secondary, #5A534C)',
+            fontWeight: internalIsLiked ? 600 : 500,
             fontSize: '0.875rem',
-            cursor: 'pointer',
+            cursor: isLiking ? 'wait' : 'pointer',
+            opacity: isLiking ? 0.7 : 1,
             transition: 'var(--transition-smooth, all 0.2s ease)',
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = 'var(--color-warm-ivory-light, #FAF7F2)';
-            e.currentTarget.style.color = 'var(--color-primary-dark, #171513)';
+            if (!isLiking) {
+              e.currentTarget.style.backgroundColor = 'var(--color-warm-ivory-light, #FAF7F2)';
+              e.currentTarget.style.color = 'var(--color-primary-dark, #171513)';
+            }
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-            e.currentTarget.style.color = isLiked ? 'var(--color-terracotta, #B86F52)' : 'var(--text-secondary, #5A534C)';
+            if (!isLiking) {
+              e.currentTarget.style.backgroundColor = 'transparent';
+              e.currentTarget.style.color = internalIsLiked ? 'var(--color-terracotta, #B86F52)' : 'var(--text-secondary, #5A534C)';
+            }
           }}
         >
-          <ThumbsUp size={16} fill={isLiked ? 'currentColor' : 'none'} aria-hidden="true" />
+          <ThumbsUp size={16} fill={internalIsLiked ? 'currentColor' : 'none'} aria-hidden="true" />
           <span>Like</span>
         </button>
 
@@ -640,6 +803,84 @@ export const ProjectPostCard = ({
           <span>Comment</span>
         </button>
       </div>
+
+      {/* Anonymous Sign-in Prompt */}
+      {showAuthNotice && (
+        <div
+          role="alert"
+          style={{
+            marginTop: '0.5rem',
+            padding: '0.45rem 0.75rem',
+            fontSize: '0.8rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '0.5rem',
+            backgroundColor: 'var(--color-warm-ivory-light, #FAF7F2)',
+            border: '1px solid var(--border-subtle, #DED4C4)',
+            borderRadius: 'var(--radius-sm, 4px)',
+            color: 'var(--color-primary-dark, #171513)',
+          }}
+        >
+          <span>
+            Please <a href="/login" style={{ color: 'var(--color-terracotta, #B86F52)', fontWeight: 600, textDecoration: 'underline' }}>sign in</a> with your collegiate account to like projects.
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowAuthNotice(false)}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--text-muted, #847C73)',
+              fontSize: '1rem',
+              lineHeight: 1,
+              padding: '0 0.2rem',
+            }}
+            aria-label="Dismiss notice"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Like Error Notification */}
+      {likeError && (
+        <div
+          role="alert"
+          style={{
+            marginTop: '0.5rem',
+            padding: '0.45rem 0.75rem',
+            fontSize: '0.8rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '0.5rem',
+            backgroundColor: '#FFEBEE',
+            border: '1px solid #FFCDD2',
+            borderRadius: 'var(--radius-sm, 4px)',
+            color: '#C62828',
+          }}
+        >
+          <span>{likeError}</span>
+          <button
+            type="button"
+            onClick={() => setLikeError(null)}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: '#C62828',
+              fontSize: '1rem',
+              lineHeight: 1,
+              padding: '0 0.2rem',
+            }}
+            aria-label="Dismiss error"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* =========================================================================
           8. COMMENT SECTION MOUNT POINT
